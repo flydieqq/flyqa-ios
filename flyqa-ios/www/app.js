@@ -45,6 +45,8 @@ if (window.electronAPI) {
 //  2. Navigation & View Switching
 // ============================================================
 function switchView(viewName, playlistId = null) {
+  window.flyqaIOS?.closeAllOverlays?.();
+
   // Update sidebar active states
   $$('.sidebar-item').forEach(el => el.classList.remove('active'));
   $$('.playlist-item').forEach(el => el.classList.remove('active'));
@@ -1373,20 +1375,54 @@ async function loadPlaylists() {
 
 function renderPlaylistSidebar() {
   const list = $('#playlist-list');
-  if (!list) return;
+  if (list) {
+    list.innerHTML = state.playlists.map(pl => {
+      const idAttr = escapeAttr(String(pl.id));
+      return `
+      <button class="playlist-item ${String(state.currentPlaylistId) === String(pl.id) ? 'active' : ''}"
+              data-id="${idAttr}"
+              onclick="switchView('playlist', '${idAttr}')"
+              oncontextmenu="handlePlaylistContext(event, '${idAttr}')">
+        <span class="playlist-color-tag" style="background:${pl.color_tag || '#6eb6ff'};width:8px;height:8px;border-radius:50%;flex-shrink:0;"></span>
+        <span class="playlist-item-name">${escapeHTML(pl.name)}</span>
+      </button>
+    `;
+    }).join('');
+  }
 
-  list.innerHTML = state.playlists.map(pl => {
-    const idAttr = escapeAttr(String(pl.id));
-    return `
-    <button class="playlist-item ${String(state.currentPlaylistId) === String(pl.id) ? 'active' : ''}"
-            data-id="${idAttr}"
-            onclick="switchView('playlist', '${idAttr}')"
-            oncontextmenu="handlePlaylistContext(event, '${idAttr}')">
-      <span class="playlist-color-tag" style="background:${pl.color_tag || '#6eb6ff'};width:8px;height:8px;border-radius:50%;flex-shrink:0;"></span>
-      <span class="playlist-item-name">${escapeHTML(pl.name)}</span>
-    </button>
-  `;
-  }).join('');
+  const mobileList = $('#mobile-playlists-list');
+  const mobileSub = $('#mobile-playlists-subtitle');
+  if (mobileSub) {
+    mobileSub.textContent = state.playlists.length
+      ? `${state.playlists.length} плейлистов`
+      : 'Ваша коллекция музыки';
+  }
+  if (mobileList) {
+    if (!state.playlists.length) {
+      mobileList.innerHTML = '<div class="empty-state"><p>Плейлистов пока нет. Нажмите «Создать», чтобы добавить первый!</p></div>';
+    } else {
+      mobileList.innerHTML = state.playlists.map(pl => {
+        const idAttr = escapeAttr(String(pl.id));
+        const color = escapeAttr(pl.color_tag || '#6eb6ff');
+        const coverHtml = pl.cover_image
+          ? `<img src="${escapeAttr(pl.cover_image)}" alt="">`
+          : `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>`;
+        const countText = typeof pl.track_count === 'number' ? `${pl.track_count} треков` : 'Открыть плейлист';
+        return `
+          <button class="mobile-playlist-card" data-id="${idAttr}" onclick="switchView('playlist', '${idAttr}')">
+            <div class="mobile-pl-icon" style="background:${color}33;border:1px solid ${color}66;color:${color};">
+              ${coverHtml}
+            </div>
+            <div class="mobile-pl-meta">
+              <div class="mobile-pl-title">${escapeHTML(pl.name)}</div>
+              <div class="mobile-pl-sub">${escapeHTML(pl.description || countText)}</div>
+            </div>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.5"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+        `;
+      }).join('');
+    }
+  }
 }
 
 $('#btn-new-playlist')?.addEventListener('click', () => {

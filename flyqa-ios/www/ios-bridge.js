@@ -180,6 +180,25 @@
   // ============================================================
   //  iOS Mobile Tab Bar & Sidebar Drawer Navigation
   // ============================================================
+  function closeAllOverlays() {
+    const sidebar = $('#sidebar');
+    const backdrop = $('#ios-sidebar-backdrop');
+    const authOverlay = $('#auth-modal-overlay');
+    const contextMenu = $('#context-menu');
+
+    sidebar?.classList.remove('ios-open', 'open', 'active');
+    if (backdrop) {
+      backdrop.classList.remove('active', 'open');
+      backdrop.style.display = '';
+    }
+    if (authOverlay && authOverlay.style.display !== 'none') {
+      authOverlay.style.display = 'none';
+      authOverlay.setAttribute('aria-hidden', 'true');
+    }
+    if (contextMenu) contextMenu.style.display = 'none';
+    document.querySelectorAll('.blurred').forEach((el) => el.classList.remove('blurred'));
+  }
+
   function initMobileNav() {
     const sidebar = $('#sidebar');
     const backdrop = $('#ios-sidebar-backdrop');
@@ -209,21 +228,25 @@
     });
 
     authBtn?.addEventListener('click', () => {
+      closeDrawer();
       $('#btn-open-auth')?.click();
+    });
+
+    $('#btn-mobile-new-playlist')?.addEventListener('click', () => {
+      closeAllOverlays();
+      $('#btn-new-playlist')?.click();
     });
 
     tabBtns.forEach((btn) => {
       btn.addEventListener('click', () => {
         const view = btn.dataset.iosView;
-        if (view === 'playlists') {
-          toggleDrawer();
-          return;
-        }
-        closeDrawer();
+        closeAllOverlays();
         tabBtns.forEach((b) => b.classList.remove('active'));
         btn.classList.add('active');
+
+        const targetView = view === 'playlists' ? 'mobile-playlists' : view;
         if (typeof global.switchView === 'function') {
-          global.switchView(view);
+          global.switchView(targetView);
         }
       });
     });
@@ -234,7 +257,8 @@
 
   global.flyqaIOS = {
     updateMediaSession,
-    updateMediaPositionState
+    updateMediaPositionState,
+    closeAllOverlays
   };
 
   window.addEventListener('DOMContentLoaded', () => {

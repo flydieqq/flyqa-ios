@@ -538,6 +538,23 @@
         </div>
       </div>
 
+      <!-- Mobile Playlists Hub View (razor-sharp, zero-blur list) -->
+      <div class="view" id="view-mobile-playlists">
+        <div class="view-header-row">
+          <div>
+            <h2 class="view-title">Плейлисты</h2>
+            <p class="view-subtitle" id="mobile-playlists-subtitle">Ваша коллекция музыки</p>
+          </div>
+          <button class="glass-btn" id="btn-mobile-new-playlist">
+            <svg width="16" height="16" viewBox="0 0 18 18"><path d="M9 3v12M3 9h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            Создать
+          </button>
+        </div>
+        <div class="mobile-playlists-grid" id="mobile-playlists-list">
+          <div class="empty-state"><p>Плейлистов пока нет. Нажмите «Создать», чтобы добавить первый!</p></div>
+        </div>
+      </div>
+
       <!-- 7. Playlist view (Advanced Management) -->
       <div class="view" id="view-playlist">
         <!-- Playlist Banner & Metadata -->
