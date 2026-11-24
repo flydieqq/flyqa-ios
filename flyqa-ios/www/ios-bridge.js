@@ -221,6 +221,7 @@
     const backdrop = $('#ios-sidebar-backdrop');
     const authOverlay = $('#auth-modal-overlay');
     const contextMenu = $('#context-menu');
+    const fullscreenPlayer = $('#fullscreen-player');
 
     sidebar?.classList.remove('ios-open', 'open', 'active');
     if (backdrop) {
@@ -232,7 +233,19 @@
       authOverlay.setAttribute('aria-hidden', 'true');
     }
     if (contextMenu) contextMenu.style.display = 'none';
+    // Close fullscreen player if stuck open
+    if (fullscreenPlayer && fullscreenPlayer.classList.contains('active')) {
+      if (typeof global.closeFullscreenPlayer === 'function') {
+        global.closeFullscreenPlayer();
+      } else {
+        fullscreenPlayer.classList.remove('active');
+        fullscreenPlayer.style.opacity = '0';
+        fullscreenPlayer.style.visibility = 'hidden';
+        fullscreenPlayer.setAttribute('aria-hidden', 'true');
+      }
+    }
     document.querySelectorAll('.blurred').forEach((el) => el.classList.remove('blurred'));
+    document.querySelectorAll('.motion-blur').forEach((el) => el.classList.remove('motion-blur'));
   }
 
   function initMobileNav() {

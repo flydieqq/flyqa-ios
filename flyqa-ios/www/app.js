@@ -102,12 +102,17 @@ function switchView(viewName, playlistId = null) {
     }
   }
 
-  // Motion blur / transition animation
-  const activeView = $('.view.active');
-  if (activeView && !window.storageManager.getSetting('reduceMotion')) {
-    activeView.classList.remove('motion-blur');
-    void activeView.offsetWidth; // force reflow
-    activeView.classList.add('motion-blur');
+  // Motion blur / transition animation — disabled on iOS to prevent blur glitches
+  const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (!isIOS) {
+    const activeView = $('.view.active');
+    if (activeView && !window.storageManager.getSetting('reduceMotion')) {
+      activeView.classList.remove('motion-blur');
+      void activeView.offsetWidth; // force reflow
+      activeView.classList.add('motion-blur');
+      // Auto-remove after animation completes
+      setTimeout(() => activeView.classList.remove('motion-blur'), 350);
+    }
   }
 }
 
@@ -164,11 +169,15 @@ async function searchMusicDirectHTTPS(query) {
     results.push(track);
   };
 
-  const fetchJsonSafe = async (url) => {
+  // CapacitorHttp-compatible fetch (patches native iOS URL loading on real device)
+  const fetchJsonSafe = async (url, extraHeaders = {}) => {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 7000);
+    const timer = setTimeout(() => controller.abort(), 9000);
     try {
-      const res = await fetch(url, { signal: controller.signal });
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: { 'Accept': 'application/json', ...extraHeaders }
+      });
       if (!res.ok) return null;
       return await res.json();
     } catch (e) {
@@ -178,59 +187,60 @@ async function searchMusicDirectHTTPS(query) {
     }
   };
 
-  // JSONP helper for browser previews when CORS headers aren't returned (e.g. api.deezer.com)
-  const fetchJsonpSafe = (url) => new Promise((resolve) => {
+  // iTunes Search — primary source, works best on iOS WKWebView
+  // country=RU avoids musics:// scheme redirect; entity=song returns previewUrl (30s HTTPS mp3)
+  const fetchITunes = () =>
+    fetchJsonSafe(`https://itunes.apple.com/search?term=${q}&entity=song&country=RU&limit=15`);
+
+  // Deezer — secondary: try direct first (CapacitorHttp patches fetch), then JSONP fallback
+  const fetchDeezerDirect = () =>
+    fetchJsonSafe(`https://api.deezer.com/search?q=${q}&limit=12`);
+
+  const fetchDeezerJsonp = () => new Promise((resolve) => {
     const cbName = '__flyqa_jsonp_' + Math.random().toString(36).slice(2);
     const script = document.createElement('script');
     let settled = false;
     const finish = (val) => {
       if (settled) return;
       settled = true;
-      delete window[cbName];
-      script.remove();
+      try { delete window[cbName]; } catch(e) {}
+      try { script.remove(); } catch(e) {}
       resolve(val);
     };
-    const timer = setTimeout(() => finish(null), 6000);
-    window[cbName] = (data) => {
-      clearTimeout(timer);
-      finish(data);
-    };
-    script.onerror = () => {
-      clearTimeout(timer);
-      finish(null);
-    };
-    script.src = `${url}&callback=${cbName}`;
+    const timer = setTimeout(() => finish(null), 7000);
+    window[cbName] = (data) => { clearTimeout(timer); finish(data); };
+    script.onerror = () => { clearTimeout(timer); finish(null); };
+    script.src = `https://api.deezer.com/search?q=${q}&limit=12&output=jsonp&callback=${cbName}`;
     document.head.appendChild(script);
   });
 
   const fetchDeezer = async () => {
-    const direct = await fetchJsonSafe(`https://api.deezer.com/search?q=${q}&limit=12`);
-    if (direct) return direct;
-    return await fetchJsonpSafe(`https://api.deezer.com/search?q=${q}&limit=12&output=jsonp`);
+    const direct = await fetchDeezerDirect();
+    if (direct && Array.isArray(direct.data) && direct.data.length) return direct;
+    return await fetchDeezerJsonp();
   };
 
-  // Note: iTunes requires entity=song&country=RU (without media=music) to avoid musics:// redirect on iPhone UA
-  const [deezerData, itunesData, audiusData] = await Promise.all([
+  // Audius — tertiary, free music with stream URLs
+  const fetchAudius = async () => {
+    // Discover Audius API hosts first
+    let apiHost = 'https://discoveryprovider.audius.co';
+    try {
+      const hosts = await fetchJsonSafe('https://api.audius.co/');
+      if (hosts && Array.isArray(hosts.data) && hosts.data.length) {
+        apiHost = hosts.data[0];
+      }
+    } catch(e) {}
+    return fetchJsonSafe(`${apiHost}/v1/tracks/search?query=${q}&app_name=flyqa&limit=8`);
+  };
+
+  // Run all in parallel
+  const [itunesData, deezerData, audiusData] = await Promise.all([
+    fetchITunes(),
     fetchDeezer(),
-    fetchJsonSafe(`https://itunes.apple.com/search?term=${q}&entity=song&country=RU&limit=12`),
-    fetchJsonSafe(`https://api.audius.co/v1/tracks/search?query=${q}&app_name=flyqa`)
+    fetchAudius()
   ]);
 
-  if (deezerData && Array.isArray(deezerData.data)) {
-    for (const item of deezerData.data) {
-      if (!item.preview) continue;
-      addUnique({
-        videoId: `dz_${item.id}`,
-        title: item.title || 'Unknown Title',
-        artist: item.artist?.name || 'Unknown Artist',
-        duration: formatTime(item.duration || 30),
-        thumbnail: ensureHttpsUrl(item.album?.cover_big || item.album?.cover_medium || ''),
-        source: 'deezer',
-        webpageUrl: ensureHttpsUrl(item.preview)
-      });
-    }
-  }
-
+  // iTunes results (previewUrl = 30s HTTPS AAC preview)
   if (itunesData && Array.isArray(itunesData.results)) {
     for (const item of itunesData.results) {
       if (!item.previewUrl) continue;
@@ -247,6 +257,23 @@ async function searchMusicDirectHTTPS(query) {
     }
   }
 
+  // Deezer results
+  if (deezerData && Array.isArray(deezerData.data)) {
+    for (const item of deezerData.data) {
+      if (!item.preview) continue;
+      addUnique({
+        videoId: `dz_${item.id}`,
+        title: item.title || 'Unknown Title',
+        artist: item.artist?.name || 'Unknown Artist',
+        duration: formatTime(item.duration || 30),
+        thumbnail: ensureHttpsUrl(item.album?.cover_big || item.album?.cover_medium || ''),
+        source: 'deezer',
+        webpageUrl: ensureHttpsUrl(item.preview)
+      });
+    }
+  }
+
+  // Audius results (full stream URLs where available)
   if (audiusData && Array.isArray(audiusData.data)) {
     for (const item of audiusData.data.slice(0, 8)) {
       if (!item.id) continue;
@@ -257,7 +284,7 @@ async function searchMusicDirectHTTPS(query) {
         duration: formatTime(item.duration || 0),
         thumbnail: ensureHttpsUrl(item.artwork?.['480x480'] || item.artwork?.['150x150'] || ''),
         source: 'audius',
-        webpageUrl: `https://api.audius.co/v1/tracks/${encodeURIComponent(item.id)}/stream?app_name=flyqa`
+        webpageUrl: `https://discoveryprovider.audius.co/v1/tracks/${encodeURIComponent(item.id)}/stream?app_name=flyqa`
       });
     }
   }
