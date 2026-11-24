@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#0a0a0f">
+  <title>flyqa</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="ios-mobile.css">
+  <!-- SVG filter for motion blur -->
+  <svg style="position:absolute;width:0;height:0;overflow:hidden;">
+    <defs>
+      <filter id="motionBlurX">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="8,0" />
+      </filter>
+      <filter id="motionBlurY">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="0,6" />
+      </filter>
+    </defs>
+  </svg>
+</head>
+<body data-theme="classic-dark" data-radius="medium" data-blur="medium" data-transition="slide">
+  <!-- ============================================================ -->
+  <!-- flyqa Animated Welcome / Splash Screen                       -->
+  <!-- ============================================================ -->
+  <div class="flyqa-splash" id="flyqa-splash" aria-hidden="false">
+    <div class="splash-ambient-orb splash-orb-1"></div>
+    <div class="splash-ambient-orb splash-orb-2"></div>
+
+    <div class="splash-center">
+      <!-- Stylish Liquid Glass App Icon / Emblem -->
+      <div class="splash-logo-wrap">
+        <div class="splash-pulse-ring"></div>
+        <div class="splash-pulse-ring splash-pulse-ring-2"></div>
+        <div class="splash-logo-glass">
+          <svg class="splash-logo-svg" width="56" height="56" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="flyqaLogoGrad" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stop-color="#6eb6ff"/>
+                <stop offset="50%" stop-color="#a78bfa"/>
+                <stop offset="100%" stop-color="#38bdf8"/>
+              </linearGradient>
+              <linearGradient id="flyqaWaveGrad" x1="18" y1="20" x2="46" y2="44" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stop-color="#ffffff"/>
+                <stop offset="100%" stop-color="#cbe4ff"/>
+              </linearGradient>
+            </defs>
+            <circle cx="32" cy="32" r="26" stroke="url(#flyqaLogoGrad)" stroke-width="2.5" stroke-opacity="0.88"/>
+            <path d="M21 36V28M26.5 41V23M32 45V19M37.5 39V25M43 34V30" stroke="url(#flyqaWaveGrad)" stroke-width="3.2" stroke-linecap="round"/>
+          </svg>
+          <div class="splash-light-sweep"></div>
+        </div>
+      </div>
+
+      <!-- Brand Name: flyqa -->
+      <div class="splash-brand-wrap">
+        <div class="splash-brand" id="splash-brand" data-text="flyqa" aria-label="flyqa">
+          <span class="splash-letter" style="--i:0">f</span><span class="splash-letter" style="--i:1">l</span><span class="splash-letter" style="--i:2">y</span><span class="splash-letter" style="--i:3">q</span><span class="splash-letter" style="--i:4">a</span>
+        </div>
+        <div class="splash-brand-sweep"></div>
+      </div>
+    </div>
+
+    <!-- Minimalist Loading Indicator / Thin Progress Bar -->
+    <div class="splash-footer">
+      <div class="splash-progress-track">
+        <div class="splash-progress-fill" id="splash-progress-fill"></div>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var variants = ['glow', 'scale-blur', 'kinetic', 'sweep-glitch'];
+      var last = null;
+      try { last = sessionStorage.getItem('flyqa_last_splash'); } catch (e) {}
+      var pool = last ? variants.filter(function (v) { return v !== last; }) : variants;
+      var chosen = pool[Math.floor(Math.random() * pool.length)];
+      try { sessionStorage.setItem('flyqa_last_splash', chosen); } catch (e) {}
+      window.FLYQA_SPLASH_VARIANT = chosen;
+      var el = document.getElementById('flyqa-splash');
+      if (el) el.setAttribute('data-splash-variant', chosen);
+    })();
+  </script>
+
+  <!-- Adaptive background -->
+  <div id="bg-canvas" class="bg-canvas"></div>
+  <div class="bg-overlay"></div>
+
+  <!-- Title bar -->
+  <div class="titlebar" id="titlebar">
+    <div class="titlebar-drag">
+      <span class="titlebar-title">flyqa</span>
+    </div>
+    <div class="titlebar-controls">
+      <button class="tb-btn tb-minimize" id="btn-minimize" title="Свернуть">
+        <svg width="12" height="12" viewBox="0 0 12 12"><rect y="5" width="12" height="2" rx="1" fill="currentColor"/></svg>
+      </button>
+      <button class="tb-btn tb-maximize" id="btn-maximize" title="Развернуть">
+        <svg width="12" height="12" viewBox="0 0 12 12"><rect x="1" y="1" width="10" height="10" rx="2" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+      </button>
+      <button class="tb-btn tb-close" id="btn-close" title="Закрыть">
+        <svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 2L10 10M10 2L2 10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- iOS Mobile Top Header (Safe Area Top) -->
+  <header class="ios-mobile-header" id="ios-mobile-header">
+    <div class="ios-header-left">
+      <button class="ios-icon-touch" id="ios-btn-menu" title="Меню и плейлисты" aria-label="Меню">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h14M3 18h18"/></svg>
+      </button>
+      <span class="ios-brand-text">flyqa</span>
+    </div>
+    <button class="ios-auth-pill" id="ios-btn-auth">
+      <span class="ios-auth-dot"></span>
+      <span id="ios-auth-label">Войти</span>
+    </button>
+  </header>
+
+  <div class="ios-sidebar-backdrop" id="ios-sidebar-backdrop"></div>
+
+  <!-- Main layout -->
+  <div class="app-layout">
+    <!-- Sidebar -->
+    <aside class="sidebar glass-panel" id="sidebar">
+      <div class="sidebar-section">
+        <button class="sidebar-item active" data-view="search" id="nav-search">
+          <svg width="18" height="18" viewBox="0 0 18 18"><circle cx="7.5" cy="7.5" r="5" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M11.5 11.5L16 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <span>Поиск</span>
+        </button>
+        <button class="sidebar-item" data-view="queue" id="nav-queue">
+          <svg width="18" height="18" viewBox="0 0 18 18"><path d="M3 4h12M3 8h9M3 12h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <span>Очередь воспроизведения</span>
+        </button>
+        <button class="sidebar-item" data-view="local" id="nav-local">
+          <svg width="18" height="18" viewBox="0 0 18 18"><path d="M2 14h14M9 2v9M5 7l4 4 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span>Локальные файлы</span>
+        </button>
+        <button class="sidebar-item" data-view="equalizer" id="nav-equalizer">
+          <svg width="18" height="18" viewBox="0 0 18 18"><path d="M4 2v14M9 2v14M14 2v14M1 6h6M6 12h6M11 8h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <span>Эквалайзер</span>
+        </button>
+        <button class="sidebar-item" data-view="visualizer" id="nav-visualizer">
+          <svg width="18" height="18" viewBox="0 0 18 18"><path d="M2 9h2l2-5 3 10 3-7 2 4h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span>Визуализатор</span>
+        </button>
+        <button class="sidebar-item" data-view="settings" id="nav-settings">
+          <svg width="18" height="18" viewBox="0 0 18 18"><circle cx="9" cy="9" r="3" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M9 1v2M9 15v2M1 9h2M15 9h2M3.3 3.3l1.4 1.4M13.3 13.3l1.4 1.4M3.3 14.7l1.4-1.4M13.3 4.7l1.4-1.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <span>Настройки</span>
+        </button>
+      </div>
+
+      <div class="sidebar-divider"></div>
+
+      <div class="sidebar-header">
+        <h2>Плейлисты</h2>
+        <button class="icon-btn" id="btn-new-playlist" title="Создать плейлист">
+          <svg width="18" height="18" viewBox="0 0 18 18"><path d="M9 3v12M3 9h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+
+      <div class="playlist-list" id="playlist-list">
+        <!-- Dynamic playlists -->
+      </div>
+
+      <!-- Account / Cloud Sync Profile Footer -->
+      <div class="sidebar-profile" id="sidebar-profile">
+        <div class="profile-guest-card" id="profile-guest-card">
+          <div class="profile-avatar guest">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          </div>
+          <div class="profile-info">
+            <div class="profile-name">Гостевой режим</div>
+            <div class="profile-status">Локальное хранилище</div>
+          </div>
+          <button class="glass-btn small profile-login-btn" id="btn-open-auth" title="Войти или зарегистрироваться">Войти</button>
+        </div>
+
+        <div class="profile-user-card" id="profile-user-card" style="display:none;">
+          <div class="profile-avatar user" id="profile-avatar">F</div>
+          <div class="profile-info">
+            <div class="profile-name" id="profile-username">Пользователь</div>
+            <div class="profile-status cloud-active"><span class="cloud-dot"></span>Облако flyqa</div>
+          </div>
+          <button class="icon-btn profile-logout-btn" id="btn-logout" title="Выйти из аккаунта">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main content -->
+    <main class="main-content" id="main-content">
+      <!-- 1. Search view -->
+      <div class="view active" id="view-search">
+        <div class="search-header-row">
+          <div class="search-bar glass-panel">
+            <svg width="20" height="20" viewBox="0 0 20 20"><circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M13 13l5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <input type="text" id="search-input" placeholder="Поиск музыки и исполнителей..." autocomplete="off">
+            <div class="search-spinner" id="search-spinner" style="display:none;">
+              <div class="spinner"></div>
+            </div>
+          </div>
+        </div>
+        <div class="track-list" id="search-results">
+          <div class="empty-state">
+            <svg width="64" height="64" viewBox="0 0 64 64" opacity="0.3"><circle cx="28" cy="28" r="18" stroke="currentColor" stroke-width="3" fill="none"/><path d="M42 42l16 16" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>
+            <p>Введите запрос для поиска музыки</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. Queue view (Interactive Up Next) -->
+      <div class="view" id="view-queue">
+        <div class="view-header-row">
+          <div>
+            <h2 class="view-title">Очередь воспроизведения</h2>
+            <p class="view-subtitle" id="queue-count-subtitle">0 треков в очереди</p>
+          </div>
+          <div class="queue-actions">
+            <div class="dropdown-wrap">
+              <button class="glass-btn small" id="btn-shuffle-mode-toggle">
+                <span id="shuffle-mode-label">Режим: Fair Shuffle</span>
+                <svg width="14" height="14" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.8" fill="none"/></svg>
+              </button>
+              <div class="dropdown-menu glass-panel" id="shuffle-mode-dropdown" style="display:none;">
+                <button class="dropdown-item" data-mode="fair">Fair Shuffle (чередование авторов)</button>
+                <button class="dropdown-item" data-mode="random">True Random (полный рандом)</button>
+                <button class="dropdown-item" data-mode="mood">Mood Shuffle (по стилю и длительности)</button>
+              </div>
+            </div>
+            <button class="glass-btn small" id="btn-shuffle-now" title="Перемешать текущую очередь">
+              <svg width="16" height="16" viewBox="0 0 16 16"><path d="M10 2h4v4M14 2L9 7M10 14h4v-4M14 14l-5-5M2 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg>
+              Перемешать
+            </button>
+            <button class="glass-btn small danger" id="btn-clear-queue">Очистить очередь</button>
+          </div>
+        </div>
+        <div class="track-list" id="queue-list">
+          <div class="empty-state"><p>Очередь пуста</p></div>
+        </div>
+      </div>
+
+      <!-- 3. Local files view -->
+      <div class="view" id="view-local">
+        <div class="view-header-row">
+          <div>
+            <h2 class="view-title">Локальные файлы</h2>
+            <p class="view-subtitle">Воспроизведение вашей музыки с компьютера</p>
+          </div>
+          <button class="glass-btn" id="btn-open-files">
+            <svg width="18" height="18" viewBox="0 0 18 18"><path d="M2 14h14M9 2v9M5 7l4 4 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Открыть файлы...
+          </button>
+        </div>
+        <div class="track-list" id="local-files-list">
+          <div class="empty-state"><p>Нажмите «Открыть файлы», чтобы выбрать аудиозаписи</p></div>
+        </div>
+      </div>
+
+      <!-- 4. Equalizer view -->
+      <div class="view" id="view-equalizer">
+        <div class="view-header-row">
+          <div>
+            <h2 class="view-title">10-полосный эквалайзер</h2>
+            <p class="view-subtitle">Точная настройка звука, усиление басов и 3D-пространство</p>
+          </div>
+          <div class="eq-top-actions">
+            <label class="toggle-switch">
+              <input type="checkbox" id="eq-bypass-toggle" checked>
+              <span class="slider"></span>
+              <span class="toggle-label" id="eq-bypass-label">Эквалайзер активен</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="eq-container glass-panel">
+          <!-- Preset selector & custom preset actions -->
+          <div class="eq-toolbar">
+            <div class="eq-preset-select-wrap">
+              <label>Пресет:</label>
+              <select id="eq-preset-select" class="glass-select">
+                <option value="Flat">Flat</option>
+                <option value="Bass Boost">Bass Boost</option>
+                <option value="Electronic">Electronic</option>
+                <option value="Rock">Rock</option>
+                <option value="Pop">Pop</option>
+                <option value="Jazz">Jazz</option>
+                <option value="Vocal">Vocal</option>
+                <option value="Classical">Classical</option>
+              </select>
+            </div>
+            <div class="eq-custom-btns">
+              <button class="glass-btn small" id="btn-save-custom-preset">+ Сохранить пресет</button>
+              <button class="glass-btn small danger" id="btn-delete-custom-preset" style="display:none;">Удалить пресет</button>
+              <button class="glass-btn small" id="btn-reset-eq">Сбросить</button>
+            </div>
+          </div>
+
+          <!-- 10 Frequency Sliders -->
+          <div class="eq-bands-wrapper">
+            <!-- Preamp band -->
+            <div class="eq-slider-col preamp-col">
+              <div class="eq-gain-val" id="val-preamp">0dB</div>
+              <div class="eq-vertical-slider-wrap">
+                <input type="range" class="eq-v-slider" id="slider-preamp" min="-12" max="12" step="0.5" value="0">
+              </div>
+              <div class="eq-band-label">Preamp</div>
+            </div>
+
+            <div class="eq-bands-divider"></div>
+
+            <!-- 10 EQ Bands -->
+            <div class="eq-bands-list" id="eq-bands-list">
+              <!-- Dynamically populated 10 bands -->
+            </div>
+          </div>
+
+          <!-- Extra Effects: Bass Booster, 3D Surround -->
+          <div class="eq-effects-row">
+            <div class="effect-card glass-panel">
+              <div class="effect-header">
+                <span class="effect-title">Bass Booster (Усиление низких частот)</span>
+                <span class="effect-value" id="val-bass-boost">0%</span>
+              </div>
+              <input type="range" class="glass-range" id="slider-bass-boost" min="0" max="100" value="0">
+            </div>
+
+            <div class="effect-card glass-panel">
+              <div class="effect-header">
+                <span class="effect-title">3D Surround / Spatial Audio (Объёмный звук)</span>
+                <span class="effect-value" id="val-surround">0%</span>
+              </div>
+              <input type="range" class="glass-range" id="slider-surround" min="0" max="100" value="0">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 5. Visualizer view -->
+      <div class="view" id="view-visualizer">
+        <div class="view-header-row">
+          <div>
+            <h2 class="view-title">Аудио визуализатор</h2>
+            <p class="view-subtitle">Синхронный рендеринг звуковой волны и спектра (60–144 FPS)</p>
+          </div>
+          <div class="vis-top-actions">
+            <label class="toggle-switch">
+              <input type="checkbox" id="vis-enable-toggle" checked>
+              <span class="slider"></span>
+              <span class="toggle-label" id="vis-toggle-label">Визуализатор вкл</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="visualizer-container glass-panel">
+          <!-- Canvas -->
+          <canvas id="visualizer-canvas" class="visualizer-canvas"></canvas>
+
+          <!-- Floating controls toolbar -->
+          <div class="visualizer-controls-bar glass-panel">
+            <div class="vis-modes-group">
+              <button class="pill-btn active" data-vmode="spectrum" id="btn-vmode-spectrum">Classic Bars</button>
+              <button class="pill-btn" data-vmode="waveform" id="btn-vmode-waveform">Waveform</button>
+              <button class="pill-btn" data-vmode="circular" id="btn-vmode-circular">Circular</button>
+              <button class="pill-btn" data-vmode="particles" id="btn-vmode-particles">Particles</button>
+            </div>
+
+            <div class="vis-divider"></div>
+
+            <div class="vis-setting-item">
+              <span>Цвет:</span>
+              <select id="vis-color-mode-select" class="glass-select small">
+                <option value="dynamic">Под обложку</option>
+                <option value="gradient">Неоновый градиент</option>
+                <option value="custom">Свой цвет</option>
+              </select>
+              <input type="color" id="vis-custom-color-picker" value="#6eb6ff" style="display:none;" title="Выбрать цвет">
+            </div>
+
+            <div class="vis-setting-item">
+              <span>Чувствительность:</span>
+              <input type="range" class="glass-range mini" id="vis-sensitivity-slider" min="0.5" max="2.5" step="0.1" value="1.2">
+            </div>
+
+            <div class="vis-setting-item">
+              <span>Сглаживание:</span>
+              <input type="range" class="glass-range mini" id="vis-smoothing-slider" min="0.5" max="0.95" step="0.05" value="0.82">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 6. Settings view -->
+      <div class="view" id="view-settings">
+        <h2 class="view-title">Настройки и кастомизация</h2>
+
+        <div class="settings-grid">
+          <!-- Section 1: Themes -->
+          <div class="settings-section glass-panel">
+            <h3 class="section-title">Темы оформления</h3>
+            <p class="section-desc">Выберите цветовую схему или настройте свои акценты</p>
+
+            <div class="themes-selector-grid" id="themes-grid">
+              <button class="theme-card active" data-theme-name="classic-dark">
+                <div class="theme-swatch" style="background:#0a0a0f; border-color:#6eb6ff;"></div>
+                <span>Classic Dark</span>
+              </button>
+              <button class="theme-card" data-theme-name="oled">
+                <div class="theme-swatch" style="background:#000000; border-color:#38ef7d;"></div>
+                <span>Dark OLED</span>
+              </button>
+              <button class="theme-card" data-theme-name="light">
+                <div class="theme-swatch" style="background:#eef2f7; border-color:#2563eb;"></div>
+                <span>Clean Light</span>
+              </button>
+              <button class="theme-card" data-theme-name="cyberpunk">
+                <div class="theme-swatch" style="background:#090814; border-color:#fee715;"></div>
+                <span>Cyberpunk</span>
+              </button>
+              <button class="theme-card" data-theme-name="retro-synth">
+                <div class="theme-swatch" style="background:#140c24; border-color:#ff2a85;"></div>
+                <span>Retro Synth</span>
+              </button>
+              <button class="theme-card" data-theme-name="monochrome">
+                <div class="theme-swatch" style="background:#121212; border-color:#ffffff;"></div>
+                <span>Monochrome</span>
+              </button>
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-title">Dynamic Palette</span>
+                <span class="setting-desc">Автоматическая адаптация акцентных цветов под обложку текущего трека</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="setting-dynamic-palette" checked>
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-row" id="row-custom-accent">
+              <div class="setting-info">
+                <span class="setting-title">Кастомный акцентный цвет</span>
+                <span class="setting-desc">Цвет активных элементов, ползунков и кнопок</span>
+              </div>
+              <input type="color" id="setting-accent-picker" value="#6eb6ff" class="color-picker-input">
+            </div>
+          </div>
+
+          <!-- Section 2: Animations & Visual Player Style -->
+          <div class="settings-section glass-panel">
+            <h3 class="section-title">Анимации и стиль плеера</h3>
+            <p class="section-desc">Настройка физики переходов и визуального отображения обложки</p>
+
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-title">Стиль обложки плеера</span>
+                <span class="setting-desc">Виниловая пластинка, кассета или 3D-эффект</span>
+              </div>
+              <select id="setting-player-style" class="glass-select">
+                <option value="cover">Стандартная обложка</option>
+                <option value="vinyl">Вращающийся винил</option>
+                <option value="cassette">Винтажная кассета</option>
+                <option value="tilt">3D Tilt (наклон при наведении)</option>
+              </select>
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-title">Стиль перехода экранов</span>
+                <span class="setting-desc">Плавное смещение, затухание или масштабирование</span>
+              </div>
+              <select id="setting-transition-style" class="glass-select">
+                <option value="slide">Пружинный Slide</option>
+                <option value="fade">Мягкий Fade</option>
+                <option value="zoom">Масштабирование Zoom</option>
+              </select>
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-title">Скорость анимаций</span>
+                <span class="setting-desc">Множитель длительности переходов</span>
+              </div>
+              <select id="setting-anim-speed" class="glass-select">
+                <option value="0.5x">0.5x (Плавнее)</option>
+                <option value="1x">1.0x (Стандарт)</option>
+                <option value="1.5x">1.5x (Быстрее)</option>
+              </select>
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-title">Режим снижения нагрузки (Reduce Motion)</span>
+                <span class="setting-desc">Минимальные анимации и экономия ресурсов GPU для слабых устройств</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="setting-reduce-motion">
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Section 3: Interface Styling -->
+          <div class="settings-section glass-panel">
+            <h3 class="section-title">Геометрия и стеклянный эффект</h3>
+            <p class="section-desc">Форма углов и интенсивность Acrylic / Glassmorphism блюра</p>
+
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-title">Скругление углов</span>
+                <span class="setting-desc">Острые, сбалансированные или округлые элементы</span>
+              </div>
+              <select id="setting-corner-radius" class="glass-select">
+                <option value="sharp">Sharp (0px)</option>
+                <option value="medium">Medium (12px)</option>
+                <option value="pill">Pill / Round (24px)</option>
+              </select>
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-title">Интенсивность размытия (Blur)</span>
+                <span class="setting-desc">Сила эффекта backdrop-filter стеклянных панелей</span>
+              </div>
+              <select id="setting-blur-intensity" class="glass-select">
+                <option value="none">Без размытия (None)</option>
+                <option value="low">Низкое (10px)</option>
+                <option value="medium">Среднее (24px)</option>
+                <option value="high">Высокое (40px)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 7. Playlist view (Advanced Management) -->
+      <div class="view" id="view-playlist">
+        <!-- Playlist Banner & Metadata -->
+        <div class="playlist-banner glass-panel">
+          <div class="playlist-cover-upload-wrap" id="playlist-cover-wrap" title="Нажмите, чтобы сменить обложку">
+            <img id="playlist-custom-cover" class="playlist-custom-cover" style="display:none;" alt="">
+            <div class="playlist-cover-fallback" id="playlist-cover-fallback">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="currentColor" opacity="0.4"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+            </div>
+            <div class="cover-upload-badge">
+              <svg width="14" height="14" viewBox="0 0 16 16"><path d="M8 2v8M4 6l4-4 4 4M2 12h12" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>
+            </div>
+            <input type="file" id="playlist-cover-file-input" accept="image/*" style="display:none;">
+          </div>
+
+          <div class="playlist-banner-info">
+            <div class="playlist-tag-row">
+              <span class="playlist-color-tag" id="playlist-color-tag-indicator"></span>
+              <span class="playlist-type-label">Плейлист</span>
+            </div>
+            <h1 class="playlist-title-main" id="playlist-name-display">Мой плейлист</h1>
+            <p class="playlist-desc-display" id="playlist-desc-display">Нет описания</p>
+            <div class="playlist-stats" id="playlist-stats-display">0 треков</div>
+          </div>
+
+          <div class="playlist-header-buttons">
+            <button class="glass-btn small" id="btn-edit-playlist-meta" title="Редактировать метаданные">
+              <svg width="14" height="14" viewBox="0 0 16 16"><path d="M11 2l3 3-9 9H2v-3l9-9z" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+              Изменить
+            </button>
+            <button class="icon-btn danger" id="btn-delete-playlist" title="Удалить плейлист">
+              <svg width="16" height="16" viewBox="0 0 16 16"><path d="M3 4h10M6 4V3h4v1M5 4v9h6V4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Playlist Toolbar: Search, Sort, Batch Actions Toggle -->
+        <div class="playlist-toolbar">
+          <div class="playlist-search-box glass-panel">
+            <svg width="16" height="16" viewBox="0 0 20 20"><circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M13 13l5 5" stroke="currentColor" stroke-width="1.8"/></svg>
+            <input type="text" id="playlist-search-input" placeholder="Поиск в плейлисте...">
+          </div>
+
+          <div class="playlist-sort-wrap">
+            <span>Сортировка:</span>
+            <select id="playlist-sort-select" class="glass-select small">
+              <option value="default">По порядку (свой)</option>
+              <option value="title-asc">По названию (А-Я)</option>
+              <option value="title-desc">По названию (Я-А)</option>
+              <option value="artist-asc">По артисту</option>
+              <option value="duration-asc">По длительности (возр)</option>
+              <option value="duration-desc">По длительности (убыв)</option>
+            </select>
+          </div>
+
+          <button class="glass-btn small" id="btn-toggle-multi-select">
+            <span id="btn-multi-select-label">Выбрать несколько</span>
+          </button>
+        </div>
+
+        <!-- Batch Actions Bar (visible when 1+ tracks selected) -->
+        <div class="batch-actions-bar glass-panel" id="batch-actions-bar" style="display:none;">
+          <div class="batch-count-info" id="batch-count-info">Выбрано: 0</div>
+          <div class="batch-btns-row">
+            <button class="glass-btn small" id="btn-batch-select-all">Выбрать все</button>
+            <button class="glass-btn small" id="btn-batch-move">Переместить в...</button>
+            <button class="glass-btn small danger" id="btn-batch-delete">Удалить выбранные</button>
+            <button class="icon-btn" id="btn-batch-cancel" title="Отмена">✕</button>
+          </div>
+        </div>
+
+        <!-- Track List (with Drag and Drop support) -->
+        <div class="track-list" id="playlist-tracks"></div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Player bar (bottom) -->
+  <div class="player-bar glass-panel" id="player-bar">
+    <div class="player-track-info">
+      <div class="player-cover-wrap style-cover" id="player-cover-wrap" title="Развернуть полноэкранный плеер (F)">
+        <!-- Vinyl Record Center Element -->
+        <div class="vinyl-disc"></div>
+        <!-- Cassette Tape Window -->
+        <div class="cassette-tape"><div class="cassette-reel reel-left"></div><div class="cassette-reel reel-right"></div></div>
+        
+        <img id="player-cover" class="player-cover" src="" alt="" />
+        <div class="player-cover-placeholder" id="player-cover-placeholder">
+          <svg width="32" height="32" viewBox="0 0 32 32"><circle cx="16" cy="16" r="12" stroke="currentColor" stroke-width="2" fill="none" opacity="0.3"/><path d="M13 11v10l8-5z" fill="currentColor" opacity="0.3"/></svg>
+        </div>
+        <div class="player-cover-expand-hint" title="Развернуть на весь экран (F)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+        </div>
+      </div>
+      <div class="player-meta">
+        <div class="player-title" id="player-title">Не воспроизводится</div>
+        <div class="player-artist" id="player-artist"></div>
+      </div>
+    </div>
+
+    <div class="player-controls-center">
+      <div class="player-buttons">
+        <!-- Smart Shuffle Toggle Button -->
+        <button class="ctrl-btn" id="btn-shuffle-toggle" title="Режим перемешивания">
+          <svg width="18" height="18" viewBox="0 0 18 18" id="shuffle-icon"><path d="M12 3h4v4M16 3L10 9M12 15h4v-4M16 15l-6-6M2 5l5 5-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+        </button>
+
+        <button class="ctrl-btn" id="btn-prev" title="Предыдущий (Ctrl+Left)">
+          <svg width="20" height="20" viewBox="0 0 20 20"><path d="M5 4v12M17 4L8 10l9 6z" fill="currentColor"/></svg>
+        </button>
+
+        <button class="ctrl-btn play-btn" id="btn-play" title="Воспроизведение (Пробел)">
+          <svg width="24" height="24" viewBox="0 0 24 24" id="play-icon"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>
+        </button>
+
+        <button class="ctrl-btn" id="btn-next" title="Следующий (Ctrl+Right)">
+          <svg width="20" height="20" viewBox="0 0 20 20"><path d="M15 4v12M3 4l9 6-9 6z" fill="currentColor"/></svg>
+        </button>
+
+        <!-- Repeat Toggle Button -->
+        <button class="ctrl-btn" id="btn-repeat-toggle" title="Повтор">
+          <svg width="18" height="18" viewBox="0 0 18 18" id="repeat-icon"><path d="M14 6H4a2 2 0 0 0-2 2v2M4 12h10a2 2 0 0 0 2-2V8" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/><path d="M12 4l3 2-3 2M6 14l-3-2 3-2" fill="currentColor"/></svg>
+        </button>
+      </div>
+
+      <div class="player-progress">
+        <span class="time-current" id="time-current">0:00</span>
+        <div class="progress-bar-wrap" id="progress-bar-wrap">
+          <div class="progress-bar" id="progress-bar">
+            <div class="progress-fill" id="progress-fill"></div>
+            <div class="progress-thumb" id="progress-thumb"></div>
+          </div>
+        </div>
+        <span class="time-total" id="time-total">0:00</span>
+      </div>
+    </div>
+
+    <div class="player-controls-right">
+      <!-- Quick EQ Shortcut -->
+      <button class="ctrl-btn" id="btn-quick-eq" title="Эквалайзер">
+        <svg width="18" height="18" viewBox="0 0 18 18"><path d="M4 2v14M9 2v14M14 2v14M1 6h6M6 12h6M11 8h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </button>
+
+      <!-- Quick Visualizer Shortcut -->
+      <button class="ctrl-btn" id="btn-quick-vis" title="Визуализатор">
+        <svg width="18" height="18" viewBox="0 0 18 18"><path d="M2 9h2l2-5 3 10 3-7 2 4h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+
+      <!-- Volume -->
+      <button class="ctrl-btn" id="btn-volume-icon" title="Громкость">
+        <svg width="20" height="20" viewBox="0 0 20 20" id="volume-icon"><path d="M3 7h3l4-4v14l-4-4H3V7z" fill="currentColor"/><path d="M14 6a6 6 0 010 8M12 8a3 3 0 010 4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" id="volume-waves"/></svg>
+      </button>
+      <div class="volume-slider-wrap">
+        <input type="range" id="volume-slider" class="volume-slider" min="0" max="100" value="80">
+      </div>
+
+      <!-- Fullscreen / Expand Now Playing -->
+      <button class="ctrl-btn" id="btn-fullscreen-toggle" title="Полноэкранный плеер (F)">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- Fullscreen Now Playing Overlay (Liquid Glass 144 FPS)        -->
+  <!-- ============================================================ -->
+  <div class="fullscreen-player-overlay" id="fullscreen-player" aria-hidden="true">
+    <!-- Ambient blurred background & dynamic lighting -->
+    <div class="fs-ambient-backdrop" id="fs-ambient-backdrop">
+      <div class="fs-ambient-blob fs-blob-1" id="fs-blob-1"></div>
+      <div class="fs-ambient-blob fs-blob-2" id="fs-blob-2"></div>
+      <div class="fs-ambient-blob fs-blob-3" id="fs-blob-3"></div>
+      <div class="fs-ambient-mesh"></div>
+    </div>
+
+    <!-- iOS Swipe Down Indicator -->
+    <div class="fs-swipe-handle" aria-hidden="true"></div>
+
+    <!-- Top Header Bar (collapsible, auto-hides on idle) -->
+    <div class="fs-top-bar" id="fs-top-bar">
+      <button class="fs-icon-btn fs-btn-collapse" id="btn-close-fullscreen" title="Свернуть плеер (Esc или F)">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="6 9 12 15 18 9"></polyline>
+        </svg>
+      </button>
+      <div class="fs-top-badge">
+        <span class="fs-live-indicator"></span>
+        <span class="fs-top-badge-text">СЕЙЧАС ИГРАЕТ</span>
+      </div>
+      <div class="fs-top-actions">
+        <button class="fs-icon-btn" id="fs-btn-window-fs" title="Полный экран монитора (F11)">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Central Stage: Cover Art, Typography & Controls -->
+    <div class="fs-stage" id="fs-stage">
+      <!-- Large Cover Card with floating liquid glass shadow -->
+      <div class="fs-cover-container" id="fs-cover-container">
+        <div class="fs-cover-wrap style-cover" id="fs-cover-wrap">
+          <!-- Stylistic elements (Vinyl / Cassette mirroring) -->
+          <div class="vinyl-disc"></div>
+          <div class="cassette-tape"><div class="cassette-reel reel-left"></div><div class="cassette-reel reel-right"></div></div>
+
+          <img class="fs-cover-img" id="fs-cover-img" src="" alt="" />
+          <div class="fs-cover-placeholder" id="fs-cover-placeholder">
+            <svg width="84" height="84" viewBox="0 0 32 32">
+              <circle cx="16" cy="16" r="12" stroke="currentColor" stroke-width="1.8" fill="none" opacity="0.4"/>
+              <path d="M13 11v10l8-5z" fill="currentColor" opacity="0.4"/>
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      <!-- Metadata Section: Title Marquee & Artist -->
+      <div class="fs-meta-section" id="fs-meta-section">
+        <div class="fs-title-marquee-wrap" id="fs-title-wrap">
+          <h1 class="fs-title" id="fs-title">Не воспроизводится</h1>
+        </div>
+        <div class="fs-artist" id="fs-artist">Выберите трек для воспроизведения</div>
+      </div>
+
+      <!-- Playback Controls & Extended Progress Bar -->
+      <div class="fs-controls-section" id="fs-controls-section">
+        <!-- Extended Seek Bar -->
+        <div class="fs-progress-container">
+          <div class="fs-progress-wrap" id="fs-progress-wrap">
+            <div class="fs-progress-track" id="fs-progress-track">
+              <div class="fs-progress-fill" id="fs-progress-fill"></div>
+              <div class="fs-progress-thumb" id="fs-progress-thumb"></div>
+            </div>
+            <div class="fs-progress-tooltip" id="fs-progress-tooltip">0:00</div>
+          </div>
+          <div class="fs-time-row">
+            <span class="fs-time-label" id="fs-time-current">0:00</span>
+            <span class="fs-time-label" id="fs-time-total">0:00</span>
+          </div>
+        </div>
+
+        <!-- Playback Buttons Row -->
+        <div class="fs-playback-buttons">
+          <button class="fs-ctrl-btn" id="fs-btn-shuffle" title="Режим перемешивания">
+            <svg width="22" height="22" viewBox="0 0 18 18" id="fs-shuffle-icon"><path d="M12 3h4v4M16 3L10 9M12 15h4v-4M16 15l-6-6M2 5l5 5-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+          </button>
+
+          <button class="fs-ctrl-btn" id="fs-btn-prev" title="Предыдущий (Ctrl+Left)">
+            <svg width="24" height="24" viewBox="0 0 20 20"><path d="M5 4v12M17 4L8 10l9 6z" fill="currentColor"/></svg>
+          </button>
+
+          <button class="fs-ctrl-btn fs-play-main-btn" id="fs-btn-play" title="Воспроизведение / Пауза (Space)">
+            <svg width="32" height="32" viewBox="0 0 24 24" id="fs-play-icon" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          </button>
+
+          <button class="fs-ctrl-btn" id="fs-btn-next" title="Следующий (Ctrl+Right)">
+            <svg width="24" height="24" viewBox="0 0 20 20"><path d="M15 4v12M3 4l9 6-9 6z" fill="currentColor"/></svg>
+          </button>
+
+          <button class="fs-ctrl-btn" id="fs-btn-repeat" title="Повтор">
+            <svg width="22" height="22" viewBox="0 0 18 18" id="fs-repeat-icon"><path d="M14 6H4a2 2 0 0 0-2 2v2M4 12h10a2 2 0 0 0 2-2V8" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/><path d="M12 4l3 2-3 2M6 14l-3-2 3-2" fill="currentColor"/></svg>
+          </button>
+        </div>
+
+        <!-- Bottom Controls Accessories: Volume Slider & Shortcuts -->
+        <div class="fs-bottom-row">
+          <div class="fs-volume-wrap">
+            <button class="fs-ctrl-btn fs-sm" id="fs-btn-volume" title="Громкость">
+              <svg width="20" height="20" viewBox="0 0 20 20" id="fs-volume-icon"><path d="M3 7h3l4-4v14l-4-4H3V7z" fill="currentColor"/><path d="M14 6a6 6 0 010 8M12 8a3 3 0 010 4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" id="fs-volume-waves"/></svg>
+            </button>
+            <input type="range" id="fs-volume-slider" class="fs-volume-slider" min="0" max="100" value="80">
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Context menu -->
+  <div class="context-menu glass-panel" id="context-menu" style="display:none;"></div>
+
+  <!-- ============================================================ -->
+  <!-- Auth Modal (Sign In / Sign Up — Supabase Cloud Sync)         -->
+  <!-- ============================================================ -->
+  <div class="modal-overlay auth-modal-overlay" id="auth-modal-overlay" style="display:none;" aria-hidden="true">
+    <div class="modal-dialog auth-modal-dialog glass-panel">
+      <button class="auth-close-btn" id="btn-close-auth" title="Закрыть">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+
+      <div class="auth-header">
+        <div class="auth-brand-pill">flyqa cloud</div>
+        <h2 class="auth-title" id="auth-modal-title">Добро пожаловать</h2>
+        <p class="auth-subtitle">Синхронизируйте плейлисты и треки на всех устройствах</p>
+      </div>
+
+      <div class="auth-tabs" role="tablist">
+        <button class="auth-tab active" id="auth-tab-login" data-auth-mode="login" type="button">Вход</button>
+        <button class="auth-tab" id="auth-tab-register" data-auth-mode="register" type="button">Регистрация</button>
+      </div>
+
+      <form class="auth-form" id="auth-form" novalidate>
+        <div class="auth-field" id="auth-username-group" style="display:none;">
+          <label for="auth-username">Имя пользователя (Username)</label>
+          <input type="text" id="auth-username" class="modal-input" placeholder="например, dj_flyqa" autocomplete="username">
+        </div>
+
+        <div class="auth-field">
+          <label for="auth-email">Email</label>
+          <input type="email" id="auth-email" class="modal-input" placeholder="you@example.com" autocomplete="email" required>
+        </div>
+
+        <div class="auth-field">
+          <label for="auth-password">Пароль</label>
+          <input type="password" id="auth-password" class="modal-input" placeholder="Минимум 6 символов" autocomplete="current-password" required>
+        </div>
+
+        <div class="auth-feedback error" id="auth-error-msg" style="display:none;"></div>
+        <div class="auth-feedback success" id="auth-success-msg" style="display:none;"></div>
+
+        <button type="submit" class="modal-btn primary auth-submit-btn" id="auth-submit-btn">
+          <span class="auth-btn-text" id="auth-btn-text">Войти</span>
+          <span class="auth-btn-spinner" id="auth-btn-spinner" style="display:none;"></span>
+        </button>
+
+        <button type="button" class="auth-guest-link" id="btn-continue-guest">Продолжить в гостевом режиме</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- iOS Bottom Tab Bar (Safe Area Bottom) -->
+  <nav class="ios-tabbar" id="ios-tabbar" aria-label="Нижняя навигация">
+    <button class="ios-tab-btn active" data-ios-view="search">
+      <svg width="20" height="20" viewBox="0 0 18 18"><circle cx="7.5" cy="7.5" r="5" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M11.5 11.5L16 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <span>Поиск</span>
+    </button>
+    <button class="ios-tab-btn" data-ios-view="playlists">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+      <span>Плейлисты</span>
+    </button>
+    <button class="ios-tab-btn" data-ios-view="queue">
+      <svg width="20" height="20" viewBox="0 0 18 18"><path d="M3 4h12M3 8h9M3 12h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <span>Очередь</span>
+    </button>
+    <button class="ios-tab-btn" data-ios-view="equalizer">
+      <svg width="20" height="20" viewBox="0 0 18 18"><path d="M4 2v14M9 2v14M14 2v14M1 6h6M6 12h6M11 8h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <span>EQ</span>
+    </button>
+    <button class="ios-tab-btn" data-ios-view="settings">
+      <svg width="20" height="20" viewBox="0 0 18 18"><circle cx="9" cy="9" r="3" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M9 1v2M9 15v2M1 9h2M15 9h2M3.3 3.3l1.4 1.4M13.3 13.3l1.4 1.4M3.3 14.7l1.4-1.4M13.3 4.7l1.4-1.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <span>Настройки</span>
+    </button>
+  </nav>
+
+  <!-- Audio element -->
+  <audio id="audio-element" preload="auto" playsinline webkit-playsinline></audio>
+
+  <!-- Supabase SDK & Singleton Service -->
+  <script src="vendor/supabase.js"></script>
+  <script src="services/supabase.js"></script>
+
+  <!-- Modular Scripts -->
+  <script src="modules/storage.js"></script>
+  <script src="modules/audio-engine.js"></script>
+  <script src="modules/visualizer.js"></script>
+  <script src="modules/theme-manager.js"></script>
+  <script src="modules/smart-shuffle.js"></script>
+  <script src="modules/playlist-manager.js"></script>
+  <script src="ios-bridge.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

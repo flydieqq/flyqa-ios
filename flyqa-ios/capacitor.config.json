@@ -1,0 +1,14 @@
+{
+  "appId": "com.flyqa.music",
+  "appName": "flyqa",
+  "webDir": "www",
+  "server": {
+    "iosScheme": "capacitor",
+    "androidScheme": "https"
+  },
+  "ios": {
+    "contentInset": "never",
+    "allowsLinkPreview": false,
+    "scrollEnabled": true
+  }
+}

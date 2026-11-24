@@ -1,0 +1,11 @@
+# Exclude desktop build artifacts, binaries, media, and node_modules
+glass-player/
+node_modules/
+dist/
+*.exe
+*.7z
+*.mp3
+*.ipa
+log.txt
+.env
+.DS_Store
