@@ -535,6 +535,19 @@
               </select>
             </div>
           </div>
+
+          <!-- Section 4: Network / Custom Streaming Server (Optional) -->
+          <div class="settings-section glass-panel">
+            <h3 class="section-title">Сеть и источник стриминга</h3>
+            <p class="section-desc">По умолчанию используется прямой HTTPS-поиск. Дополнительно можно указать URL вашего сервера flyqa (для YouTube-прокси).</p>
+            <div class="setting-row" style="flex-direction:column;align-items:stretch;gap:10px;">
+              <input type="url" id="setting-api-url" class="modal-input" placeholder="https://your-server.example.com (необязательно)" style="margin:0;">
+              <div style="display:flex;gap:8px;">
+                <button type="button" class="glass-btn small" id="btn-save-api-url">Сохранить URL</button>
+                <button type="button" class="glass-btn small danger" id="btn-reset-api-url">Сбросить</button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -912,7 +925,7 @@
   </nav>
 
   <!-- Audio element -->
-  <audio id="audio-element" preload="auto" playsinline webkit-playsinline></audio>
+  <audio id="audio-element" preload="auto" playsinline="true" webkit-playsinline="true" crossorigin="anonymous"></audio>
 
   <!-- Supabase SDK & Singleton Service -->
   <script src="vendor/supabase.js"></script>

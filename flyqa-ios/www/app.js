@@ -2,9 +2,33 @@
 //  flyqa — Senior Fullstack Music Application Controller
 // ============================================================
 
-const API = (window.location && window.location.protocol.startsWith('http') && window.location.port === '3457')
-  ? 'http://localhost:3457/api'
-  : 'http://localhost:3456/api';
+// Dynamic Backend URL: optional user-configured server (stored in LocalStorage),
+// never blindly calling localhost on a real iPhone.
+function getCustomBackendApi() {
+  try {
+    const saved = (localStorage.getItem('flyqa_api_url') || '').trim().replace(/\/+$/, '');
+    if (saved) return saved.endsWith('/api') ? saved : `${saved}/api`;
+  } catch (e) {}
+  if (window.location && window.location.protocol.startsWith('http') &&
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') &&
+      window.location.port === '3456') {
+    return `${window.location.origin}/api`;
+  }
+  return '';
+}
+
+function ensureHttpsUrl(url) {
+  if (!url) return '';
+  if (url.startsWith('http://') && !url.includes('localhost') && !url.includes('127.0.0.1') && !/^http:\/\/192\.168\.|^http:\/\/10\.|^http:\/\/172\./.test(url)) {
+    return 'https://' + url.slice(7);
+  }
+  return url;
+}
+
+function isDirectAudioUrl(url) {
+  if (!url || !/^https?:\/\//i.test(url)) return false;
+  return !/youtube\.com\/watch|youtu\.be\//i.test(url);
+}
 
 // Application State
 const state = {
@@ -128,6 +152,119 @@ searchInput?.addEventListener('keydown', (e) => {
   }
 });
 
+async function searchMusicDirectHTTPS(query) {
+  const q = encodeURIComponent(query);
+  const results = [];
+  const seen = new Set();
+
+  const addUnique = (track) => {
+    const key = `${(track.artist || '').toLowerCase()}|${(track.title || '').toLowerCase()}`;
+    if (!track.title || !track.webpageUrl || seen.has(key)) return;
+    seen.add(key);
+    results.push(track);
+  };
+
+  const fetchJsonSafe = async (url) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 7000);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (e) {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  // JSONP helper for browser previews when CORS headers aren't returned (e.g. api.deezer.com)
+  const fetchJsonpSafe = (url) => new Promise((resolve) => {
+    const cbName = '__flyqa_jsonp_' + Math.random().toString(36).slice(2);
+    const script = document.createElement('script');
+    let settled = false;
+    const finish = (val) => {
+      if (settled) return;
+      settled = true;
+      delete window[cbName];
+      script.remove();
+      resolve(val);
+    };
+    const timer = setTimeout(() => finish(null), 6000);
+    window[cbName] = (data) => {
+      clearTimeout(timer);
+      finish(data);
+    };
+    script.onerror = () => {
+      clearTimeout(timer);
+      finish(null);
+    };
+    script.src = `${url}&callback=${cbName}`;
+    document.head.appendChild(script);
+  });
+
+  const fetchDeezer = async () => {
+    const direct = await fetchJsonSafe(`https://api.deezer.com/search?q=${q}&limit=12`);
+    if (direct) return direct;
+    return await fetchJsonpSafe(`https://api.deezer.com/search?q=${q}&limit=12&output=jsonp`);
+  };
+
+  // Note: iTunes requires entity=song&country=RU (without media=music) to avoid musics:// redirect on iPhone UA
+  const [deezerData, itunesData, audiusData] = await Promise.all([
+    fetchDeezer(),
+    fetchJsonSafe(`https://itunes.apple.com/search?term=${q}&entity=song&country=RU&limit=12`),
+    fetchJsonSafe(`https://api.audius.co/v1/tracks/search?query=${q}&app_name=flyqa`)
+  ]);
+
+  if (deezerData && Array.isArray(deezerData.data)) {
+    for (const item of deezerData.data) {
+      if (!item.preview) continue;
+      addUnique({
+        videoId: `dz_${item.id}`,
+        title: item.title || 'Unknown Title',
+        artist: item.artist?.name || 'Unknown Artist',
+        duration: formatTime(item.duration || 30),
+        thumbnail: ensureHttpsUrl(item.album?.cover_big || item.album?.cover_medium || ''),
+        source: 'deezer',
+        webpageUrl: ensureHttpsUrl(item.preview)
+      });
+    }
+  }
+
+  if (itunesData && Array.isArray(itunesData.results)) {
+    for (const item of itunesData.results) {
+      if (!item.previewUrl) continue;
+      const art = (item.artworkUrl100 || '').replace('100x100bb', '600x600bb');
+      addUnique({
+        videoId: `it_${item.trackId}`,
+        title: item.trackName || 'Unknown Title',
+        artist: item.artistName || 'Unknown Artist',
+        duration: formatTime(Math.round((item.trackTimeMillis || 30000) / 1000)),
+        thumbnail: ensureHttpsUrl(art),
+        source: 'itunes',
+        webpageUrl: ensureHttpsUrl(item.previewUrl)
+      });
+    }
+  }
+
+  if (audiusData && Array.isArray(audiusData.data)) {
+    for (const item of audiusData.data.slice(0, 8)) {
+      if (!item.id) continue;
+      addUnique({
+        videoId: `au_${item.id}`,
+        title: item.title || 'Unknown Title',
+        artist: item.user?.name || item.user?.handle || 'Audius Artist',
+        duration: formatTime(item.duration || 0),
+        thumbnail: ensureHttpsUrl(item.artwork?.['480x480'] || item.artwork?.['150x150'] || ''),
+        source: 'audius',
+        webpageUrl: `https://api.audius.co/v1/tracks/${encodeURIComponent(item.id)}/stream?app_name=flyqa`
+      });
+    }
+  }
+
+  return results;
+}
+
 async function performSearch(query) {
   const cacheKey = query.toLowerCase();
   if (searchCache.has(cacheKey)) {
@@ -142,12 +279,23 @@ async function performSearch(query) {
   searchResults.innerHTML = '';
 
   try {
-    const res = await fetch(`${API}/search?q=${encodeURIComponent(query)}`);
-    const data = await res.json();
+    let data = null;
+    const apiBase = getCustomBackendApi();
 
-    if (data.error) {
-      searchResults.innerHTML = `<div class="empty-state"><p>Ошибка поиска: ${escapeHTML(data.error)}</p></div>`;
-      return;
+    if (apiBase) {
+      try {
+        const res = await fetch(`${apiBase}/search?q=${encodeURIComponent(query)}`);
+        if (res.ok) {
+          const json = await res.json();
+          if (Array.isArray(json) && json.length) data = json;
+        }
+      } catch (e) {
+        // Fallback smoothly to direct HTTPS search
+      }
+    }
+
+    if (!data) {
+      data = await searchMusicDirectHTTPS(query);
     }
 
     searchCache.set(cacheKey, data);
@@ -252,6 +400,9 @@ function handleTrackClick(el, event) {
     return;
   }
 
+  // Synchronously unlock iOS WebKit audio & AudioContext inside the tap gesture
+  window.flyqaIOS?.primeAudioForGesture?.();
+
   const track = getTrackData(el);
   const context = el.dataset.context;
 
@@ -328,20 +479,44 @@ async function playTrack(track) {
   updatePlayIcon();
   highlightCurrentTrack();
 
-  // Audio Source setup with Range Proxy support
+  // Audio Source setup: direct HTTPS stream, custom backend proxy, or HTTPS lookup fallback
   try {
-    if (track.source === 'local' && track.localPath) {
-      audio.src = `${API}/local-file?path=${encodeURIComponent(track.localPath)}`;
-    } else if (track.videoId || track.webpageUrl) {
+    const apiBase = getCustomBackendApi();
+    let streamUrl = '';
+
+    if (track.source === 'local' && track.localPath && apiBase) {
+      streamUrl = `${apiBase}/local-file?path=${encodeURIComponent(track.localPath)}`;
+    } else if (isDirectAudioUrl(track.webpageUrl)) {
+      streamUrl = ensureHttpsUrl(track.webpageUrl);
+    } else if (apiBase && (track.videoId || track.webpageUrl)) {
       const id = track.videoId || encodeURIComponent(track.webpageUrl);
-      audio.src = `${API}/audio/${id}`;
+      streamUrl = `${apiBase}/audio/${id}`;
+    } else {
+      // Cloud playlist track saved from YouTube without local backend: resolve direct HTTPS stream
+      const query = `${track.artist && track.artist !== 'Unknown' ? track.artist + ' ' : ''}${track.title || ''}`.trim();
+      if (query) {
+        const matches = await searchMusicDirectHTTPS(query);
+        if (matches.length && matches[0].webpageUrl) {
+          streamUrl = matches[0].webpageUrl;
+        }
+      }
     }
+
+    if (!streamUrl) {
+      showToast('Аудиопоток недоступен без сервера стриминга');
+      state.isPlaying = false;
+      updatePlayIcon();
+      return;
+    }
+
+    audio.src = streamUrl;
     audio.volume = state.volume;
     await audio.play();
     $('.player-cover-wrap')?.classList.add('playing');
     window.audioVisualizer?.start();
   } catch (err) {
     console.error('Play error:', err);
+    showToast('Ошибка воспроизведения: ' + (err.message || 'проверьте сеть'));
   }
 }
 
@@ -1273,6 +1448,31 @@ function initSettingsUI() {
     blurSelect.value = window.storageManager.getSetting('blurIntensity') || 'medium';
     blurSelect.onchange = () => window.themeManager.applyBlurIntensity(blurSelect.value);
   }
+
+  // Optional Custom Streaming Server URL
+  const apiUrlInput = $('#setting-api-url');
+  if (apiUrlInput) {
+    try {
+      apiUrlInput.value = localStorage.getItem('flyqa_api_url') || '';
+    } catch (e) {}
+
+    $('#btn-save-api-url')?.addEventListener('click', () => {
+      const val = apiUrlInput.value.trim().replace(/\/+$/, '');
+      try {
+        if (val) localStorage.setItem('flyqa_api_url', val);
+        else localStorage.removeItem('flyqa_api_url');
+      } catch (e) {}
+      searchCache.clear();
+      showToast(val ? 'URL сервера сохранён' : 'Включён прямой HTTPS-режим');
+    });
+
+    $('#btn-reset-api-url')?.addEventListener('click', () => {
+      apiUrlInput.value = '';
+      try { localStorage.removeItem('flyqa_api_url'); } catch (e) {}
+      searchCache.clear();
+      showToast('Сброшено на прямой HTTPS-режим');
+    });
+  }
 }
 
 // ============================================================
@@ -1301,13 +1501,16 @@ async function persistPlaylistOrder(playlistId, tracks) {
   if (isCloudSyncActive()) {
     await window.supabaseService.reorderPlaylistTracks(playlistId, tracks);
   } else {
-    try {
-      await fetch(`${API}/playlists/${playlistId}/reorder`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tracks })
-      });
-    } catch (e) {}
+    const apiBase = getCustomBackendApi();
+    if (apiBase) {
+      try {
+        await fetch(`${apiBase}/playlists/${playlistId}/reorder`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tracks })
+        });
+      } catch (e) {}
+    }
     const cached = getGuestPlaylistsCache();
     const pl = cached.find(p => String(p.id) === String(playlistId));
     if (pl) {
@@ -1321,13 +1524,16 @@ async function updatePlaylistMetadataRemote(playlistId, payload) {
   if (isCloudSyncActive()) {
     await window.supabaseService.updatePlaylist(playlistId, payload);
   } else {
-    try {
-      await fetch(`${API}/playlists/${playlistId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-    } catch (e) {}
+    const apiBase = getCustomBackendApi();
+    if (apiBase) {
+      try {
+        await fetch(`${apiBase}/playlists/${playlistId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      } catch (e) {}
+    }
     const cached = getGuestPlaylistsCache();
     const pl = cached.find(p => String(p.id) === String(playlistId));
     if (pl) {
@@ -1341,9 +1547,12 @@ async function deletePlaylistRemote(playlistId) {
   if (isCloudSyncActive()) {
     await window.supabaseService.deletePlaylist(playlistId);
   } else {
-    try {
-      await fetch(`${API}/playlists/${playlistId}`, { method: 'DELETE' });
-    } catch (e) {}
+    const apiBase = getCustomBackendApi();
+    if (apiBase) {
+      try {
+        await fetch(`${apiBase}/playlists/${playlistId}`, { method: 'DELETE' });
+      } catch (e) {}
+    }
     const cached = getGuestPlaylistsCache().filter(p => String(p.id) !== String(playlistId));
     saveGuestPlaylistsCache(cached);
   }
@@ -1354,11 +1563,16 @@ async function loadPlaylists() {
     if (isCloudSyncActive()) {
       state.playlists = await window.supabaseService.getPlaylists();
     } else {
-      try {
-        const res = await fetch(`${API}/playlists`);
-        state.playlists = await res.json();
-        saveGuestPlaylistsCache(state.playlists);
-      } catch (offlineErr) {
+      const apiBase = getCustomBackendApi();
+      if (apiBase) {
+        try {
+          const res = await fetch(`${apiBase}/playlists`);
+          state.playlists = await res.json();
+          saveGuestPlaylistsCache(state.playlists);
+        } catch (offlineErr) {
+          state.playlists = getGuestPlaylistsCache();
+        }
+      } else {
         state.playlists = getGuestPlaylistsCache();
       }
     }
@@ -1433,14 +1647,18 @@ $('#btn-new-playlist')?.addEventListener('click', () => {
       if (isCloudSyncActive()) {
         newPl = await window.supabaseService.createPlaylist({ name: name.trim(), color_tag: '#6eb6ff' });
       } else {
-        try {
-          const res = await fetch(`${API}/playlists`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: name.trim(), color_tag: '#6eb6ff' })
-          });
-          newPl = await res.json();
-        } catch (offlineErr) {
+        const apiBase = getCustomBackendApi();
+        if (apiBase) {
+          try {
+            const res = await fetch(`${apiBase}/playlists`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: name.trim(), color_tag: '#6eb6ff' })
+            });
+            newPl = await res.json();
+          } catch (offlineErr) {}
+        }
+        if (!newPl) {
           newPl = { id: 'local_' + Date.now(), name: name.trim(), color_tag: '#6eb6ff', tracks: [] };
           const cached = getGuestPlaylistsCache();
           cached.push(newPl);
@@ -1481,10 +1699,16 @@ async function loadPlaylistTracks(playlistId) {
     if (isCloudSyncActive()) {
       tracks = await window.supabaseService.getPlaylistTracks(playlistId);
     } else {
-      try {
-        const res = await fetch(`${API}/playlists/${playlistId}/tracks`);
-        tracks = await res.json();
-      } catch (offlineErr) {
+      const apiBase = getCustomBackendApi();
+      let fetched = false;
+      if (apiBase) {
+        try {
+          const res = await fetch(`${apiBase}/playlists/${playlistId}/tracks`);
+          tracks = await res.json();
+          fetched = true;
+        } catch (offlineErr) {}
+      }
+      if (!fetched) {
         const cached = getGuestPlaylistsCache().find(p => String(p.id) === String(playlistId));
         tracks = cached?.tracks || [];
       }
@@ -1612,11 +1836,21 @@ $('#btn-batch-delete')?.addEventListener('click', async () => {
   if (isCloudSyncActive()) {
     await window.supabaseService.batchDeleteTracks(state.currentPlaylistId, selectedIds);
   } else {
-    await fetch(`${API}/playlists/${state.currentPlaylistId}/batch-delete`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ trackIds: selectedIds })
-    });
+    const apiBase = getCustomBackendApi();
+    if (apiBase) {
+      await fetch(`${apiBase}/playlists/${state.currentPlaylistId}/batch-delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trackIds: selectedIds })
+      });
+    }
+    const idSet = new Set(selectedIds.map(String));
+    const cached = getGuestPlaylistsCache();
+    const pl = cached.find(p => String(p.id) === String(state.currentPlaylistId));
+    if (pl && Array.isArray(pl.tracks)) {
+      pl.tracks = pl.tracks.filter(t => !idSet.has(String(t.id)));
+      saveGuestPlaylistsCache(cached);
+    }
   }
 
   window.playlistManager.clearSelection();
@@ -1640,11 +1874,24 @@ $('#btn-batch-move')?.addEventListener('click', () => {
       if (isCloudSyncActive()) {
         await window.supabaseService.batchMoveTracks(state.currentPlaylistId, pl.id, selectedIds);
       } else {
-        await fetch(`${API}/playlists/${state.currentPlaylistId}/batch-move`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ trackIds: selectedIds, targetPlaylistId: pl.id })
-        });
+        const apiBase = getCustomBackendApi();
+        if (apiBase) {
+          await fetch(`${apiBase}/playlists/${state.currentPlaylistId}/batch-move`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ trackIds: selectedIds, targetPlaylistId: pl.id })
+          });
+        }
+        const idSet = new Set(selectedIds.map(String));
+        const cached = getGuestPlaylistsCache();
+        const srcPl = cached.find(p => String(p.id) === String(state.currentPlaylistId));
+        const dstPl = cached.find(p => String(p.id) === String(pl.id));
+        if (srcPl && dstPl && Array.isArray(srcPl.tracks)) {
+          const moved = srcPl.tracks.filter(t => idSet.has(String(t.id)));
+          srcPl.tracks = srcPl.tracks.filter(t => !idSet.has(String(t.id)));
+          dstPl.tracks = [...(dstPl.tracks || []), ...moved];
+          saveGuestPlaylistsCache(cached);
+        }
       }
       window.playlistManager.clearSelection();
       await loadPlaylistTracks(state.currentPlaylistId);
@@ -1809,7 +2056,16 @@ function handleTrackContext(e, el) {
           if (isCloudSyncActive()) {
             await window.supabaseService.deleteTrackFromPlaylist(track.id);
           } else {
-            await fetch(`${API}/tracks/${track.id}`, { method: 'DELETE' });
+            const apiBase = getCustomBackendApi();
+            if (apiBase) {
+              await fetch(`${apiBase}/tracks/${track.id}`, { method: 'DELETE' });
+            }
+            const cached = getGuestPlaylistsCache();
+            const pl = cached.find(p => String(p.id) === String(state.currentPlaylistId));
+            if (pl && Array.isArray(pl.tracks)) {
+              pl.tracks = pl.tracks.filter(t => String(t.id) !== String(track.id));
+              saveGuestPlaylistsCache(cached);
+            }
           }
           await loadPlaylistTracks(state.currentPlaylistId);
         }
@@ -1863,20 +2119,40 @@ async function addTrackToPlaylist(playlistId, track) {
     if (isCloudSyncActive()) {
       await window.supabaseService.addTrackToPlaylist(playlistId, track);
     } else {
-      await fetch(`${API}/playlists/${playlistId}/tracks`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const apiBase = getCustomBackendApi();
+      if (apiBase) {
+        await fetch(`${apiBase}/playlists/${playlistId}/tracks`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: track.title,
+            artist: track.artist,
+            duration: track.duration,
+            videoId: track.videoId,
+            thumbnail: track.thumbnail,
+            source: track.source || 'youtube',
+            localPath: track.localPath,
+            webpageUrl: track.webpageUrl
+          })
+        });
+      }
+      const cached = getGuestPlaylistsCache();
+      const targetPl = cached.find(p => String(p.id) === String(playlistId));
+      if (targetPl) {
+        targetPl.tracks = targetPl.tracks || [];
+        targetPl.tracks.push({
+          id: 'trk_' + Date.now(),
           title: track.title,
           artist: track.artist,
           duration: track.duration,
-          videoId: track.videoId,
+          video_id: track.videoId,
           thumbnail: track.thumbnail,
-          source: track.source || 'youtube',
-          localPath: track.localPath,
-          webpageUrl: track.webpageUrl
-        })
-      });
+          source: track.source || 'itunes',
+          local_path: track.localPath || '',
+          webpage_url: track.webpageUrl || ''
+        });
+        saveGuestPlaylistsCache(cached);
+      }
     }
     const pl = state.playlists.find(p => String(p.id) === String(playlistId));
     showToast(`Добавлено в "${pl ? pl.name : 'плейлист'}"`);

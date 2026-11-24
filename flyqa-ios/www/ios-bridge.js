@@ -5,11 +5,47 @@
 (function (global) {
   const $ = (sel) => document.querySelector(sel);
 
+  const SILENT_WAV = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+  let iosAudioUnlocked = false;
+
+  function primeAudioForGesture() {
+    const audio = $('#audio-element');
+    if (global.audioEngine && audio) {
+      try {
+        global.audioEngine.init(audio);
+        global.audioEngine.ensureRunning();
+      } catch (e) {}
+    }
+
+    if (!iosAudioUnlocked && audio) {
+      iosAudioUnlocked = true;
+      if (!audio.getAttribute('src')) {
+        try {
+          audio.src = SILENT_WAV;
+          const p = audio.play();
+          if (p && typeof p.then === 'function') {
+            p.then(() => {
+              audio.pause();
+              audio.currentTime = 0;
+            }).catch(() => {});
+          }
+        } catch (e) {}
+      }
+    }
+  }
+
   function initAudioElementForIOS() {
     const audio = $('#audio-element');
     if (!audio) return;
-    audio.setAttribute('playsinline', '');
-    audio.setAttribute('webkit-playsinline', '');
+    audio.setAttribute('playsinline', 'true');
+    audio.setAttribute('webkit-playsinline', 'true');
+    audio.setAttribute('crossorigin', 'anonymous');
+
+    const unlockOnce = () => {
+      primeAudioForGesture();
+    };
+    document.addEventListener('touchstart', unlockOnce, { once: true, capture: true, passive: true });
+    document.addEventListener('click', unlockOnce, { once: true, capture: true });
 
     audio.addEventListener('play', () => {
       if ('mediaSession' in navigator) {
@@ -258,7 +294,8 @@
   global.flyqaIOS = {
     updateMediaSession,
     updateMediaPositionState,
-    closeAllOverlays
+    closeAllOverlays,
+    primeAudioForGesture
   };
 
   window.addEventListener('DOMContentLoaded', () => {

@@ -2,6 +2,11 @@
   "appId": "com.flyqa.music",
   "appName": "flyqa",
   "webDir": "www",
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  },
   "server": {
     "iosScheme": "capacitor",
     "androidScheme": "https"
