@@ -102,9 +102,9 @@ function switchView(viewName, playlistId = null) {
     }
   }
 
-  // Motion blur / transition animation — disabled on iOS to prevent blur glitches
+  // Motion blur / transition animation — disabled on iOS & mobile viewports to prevent blur glitches
   const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  if (!isIOS) {
+  if (!isIOS && window.innerWidth > 820) {
     const activeView = $('.view.active');
     if (activeView && !window.storageManager.getSetting('reduceMotion')) {
       activeView.classList.remove('motion-blur');
@@ -157,109 +157,237 @@ searchInput?.addEventListener('keydown', (e) => {
   }
 });
 
-async function searchMusicDirectHTTPS(query) {
+const INVIDIOUS_CORS_INSTANCES = [
+  'https://yt.chocolatemoo53.com'
+];
+
+const INVIDIOUS_NATIVE_INSTANCES = [
+  'https://yt.chocolatemoo53.com',
+  'https://invidious.materialio.us',
+  'https://invidious.io.lol',
+  'https://inv.nadeko.net'
+];
+
+const PIPED_CORS_INSTANCES = [
+  'https://api.piped.private.coffee'
+];
+
+const PIPED_NATIVE_INSTANCES = [
+  'https://api.piped.private.coffee',
+  'https://pipedapi.kavin.rocks'
+];
+
+function isNativeCapacitor() {
+  return !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
+}
+
+// Safe JSON fetch with timeout; avoids AbortSignal issues with CapacitorHttp on iOS
+async function fetchJsonWithTimeout(url, timeoutMs = 3500, extraHeaders = {}) {
+  const isNativeCap = isNativeCapacitor();
+  const headers = { 'Accept': 'application/json', ...extraHeaders };
+
+  if (isNativeCap) {
+    let timer = null;
+    try {
+      const fetchPromise = fetch(url, { headers }).then(async (res) => {
+        if (!res.ok) return null;
+        try { return await res.json(); } catch (e) { return null; }
+      }).catch(() => null);
+      const timeoutPromise = new Promise((resolve) => {
+        timer = setTimeout(() => resolve(null), timeoutMs);
+      });
+      return await Promise.race([fetchPromise, timeoutPromise]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: controller.signal, headers });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (e) {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchITunesDirect(query, limit = 15) {
   const q = encodeURIComponent(query);
+  // entity=song&country=RU avoids musics:// redirect on iPhone UA and returns HTTPS .m4a previewUrl with ACAO: *
+  const data = await fetchJsonWithTimeout(
+    `https://itunes.apple.com/search?term=${q}&entity=song&country=RU&limit=${limit}`,
+    3500
+  );
+  if (!data || !Array.isArray(data.results)) return [];
+  const tracks = [];
+  for (const item of data.results) {
+    if (!item.previewUrl) continue;
+    const art = (item.artworkUrl100 || '').replace('100x100bb', '600x600bb');
+    tracks.push({
+      videoId: `it_${item.trackId}`,
+      title: item.trackName || 'Unknown Title',
+      artist: item.artistName || 'Unknown Artist',
+      duration: formatTime(Math.round((item.trackTimeMillis || 30000) / 1000)),
+      thumbnail: ensureHttpsUrl(art),
+      source: 'itunes',
+      webpageUrl: ensureHttpsUrl(item.previewUrl)
+    });
+  }
+  return tracks;
+}
+
+async function fetchInvidiousSearch(query) {
+  const q = encodeURIComponent(query);
+  const pool = isNativeCapacitor() ? INVIDIOUS_NATIVE_INSTANCES : INVIDIOUS_CORS_INSTANCES;
+  // Query instances in parallel and pick first valid non-empty response
+  const attempts = pool.map(async (base) => {
+    const data = await fetchJsonWithTimeout(`${base}/api/v1/search?q=${q}&type=video`, 3000);
+    if (!Array.isArray(data) || !data.length) throw new Error('empty');
+    const tracks = [];
+    for (const item of data.slice(0, 12)) {
+      if (!item.videoId || item.liveNow) continue;
+      const thumb = item.videoThumbnails?.[0]?.url || `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg`;
+      tracks.push({
+        videoId: item.videoId,
+        title: item.title || 'Unknown Title',
+        artist: item.author || 'YouTube Music',
+        duration: item.lengthSeconds ? formatTime(item.lengthSeconds) : '',
+        thumbnail: ensureHttpsUrl(thumb),
+        source: 'invidious',
+        instanceBase: base,
+        webpageUrl: `https://www.youtube.com/watch?v=${encodeURIComponent(item.videoId)}`
+      });
+    }
+    if (!tracks.length) throw new Error('no-tracks');
+    return tracks;
+  });
+
+  try {
+    return await Promise.any(attempts);
+  } catch (e) {
+    return [];
+  }
+}
+
+async function fetchPipedSearch(query) {
+  const q = encodeURIComponent(query);
+  const pool = isNativeCapacitor() ? PIPED_NATIVE_INSTANCES : PIPED_CORS_INSTANCES;
+  const attempts = pool.map(async (base) => {
+    const data = await fetchJsonWithTimeout(`${base}/search?q=${q}&filter=music_songs`, 3000);
+    if (!data || !Array.isArray(data.items) || !data.items.length) throw new Error('empty');
+    const tracks = [];
+    for (const item of data.items.slice(0, 12)) {
+      const match = (item.url || '').match(/[?&]v=([^&]+)/);
+      const videoId = match ? match[1] : '';
+      if (!videoId || item.isShort) continue;
+      tracks.push({
+        videoId,
+        title: item.title || 'Unknown Title',
+        artist: item.uploaderName || 'YouTube Music',
+        duration: item.duration > 0 ? formatTime(item.duration) : '',
+        thumbnail: ensureHttpsUrl(item.thumbnail || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`),
+        source: 'piped',
+        instanceBase: base,
+        webpageUrl: `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`
+      });
+    }
+    if (!tracks.length) throw new Error('no-tracks');
+    return tracks;
+  });
+
+  try {
+    return await Promise.any(attempts);
+  } catch (e) {
+    return [];
+  }
+}
+
+async function resolveYouTubeStreamViaInvidiousOrPiped(videoId, preferredBase = '') {
+  if (!videoId || videoId.startsWith('it_') || videoId.startsWith('dz_')) return '';
+
+  const invPool = isNativeCapacitor() ? INVIDIOUS_NATIVE_INSTANCES : INVIDIOUS_CORS_INSTANCES;
+  const invOrder = preferredBase && invPool.includes(preferredBase)
+    ? [preferredBase, ...invPool.filter(u => u !== preferredBase)]
+    : invPool;
+
+  for (const base of invOrder.slice(0, 2)) {
+    const data = await fetchJsonWithTimeout(`${base}/api/v1/videos/${encodeURIComponent(videoId)}`, 3000);
+    if (data && Array.isArray(data.adaptiveFormats)) {
+      const m4a = data.adaptiveFormats.find(f => /audio\/mp4/i.test(f.type || '') && f.url)
+        || data.adaptiveFormats.find(f => /audio\//i.test(f.type || '') && !/webm|opus/i.test(f.type || '') && f.url);
+      if (m4a && m4a.url) return ensureHttpsUrl(m4a.url);
+    }
+    if (data && Array.isArray(data.formatStreams)) {
+      const mp4 = data.formatStreams.find(f => /video\/mp4/i.test(f.type || '') && f.url);
+      if (mp4 && mp4.url) return ensureHttpsUrl(mp4.url);
+    }
+  }
+
+  const pipedPool = isNativeCapacitor() ? PIPED_NATIVE_INSTANCES : PIPED_CORS_INSTANCES;
+  const pipedOrder = preferredBase && pipedPool.includes(preferredBase)
+    ? [preferredBase, ...pipedPool.filter(u => u !== preferredBase)]
+    : pipedPool;
+
+  for (const base of pipedOrder) {
+    const data = await fetchJsonWithTimeout(`${base}/streams/${encodeURIComponent(videoId)}`, 3000);
+    if (data && Array.isArray(data.audioStreams)) {
+      const m4a = data.audioStreams.find(s => /mp4|m4a|aac/i.test(s.mimeType || s.format || '') && s.url);
+      if (m4a && m4a.url) return ensureHttpsUrl(m4a.url);
+    }
+  }
+
+  return '';
+}
+
+async function searchMusicDirectHTTPS(query) {
   const results = [];
   const seen = new Set();
 
   const addUnique = (track) => {
     const key = `${(track.artist || '').toLowerCase()}|${(track.title || '').toLowerCase()}`;
-    if (!track.title || !track.webpageUrl || seen.has(key)) return;
+    if (!track.title || seen.has(key)) return;
     seen.add(key);
     results.push(track);
   };
 
-  // CapacitorHttp-compatible fetch (patches native iOS URL loading on real device)
-  const fetchJsonSafe = async (url, extraHeaders = {}) => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 9000);
-    try {
-      const res = await fetch(url, {
-        signal: controller.signal,
-        headers: { 'Accept': 'application/json', ...extraHeaders }
-      });
-      if (!res.ok) return null;
-      return await res.json();
-    } catch (e) {
-      return null;
-    } finally {
-      clearTimeout(timer);
-    }
-  };
-
-  // iTunes Search — primary source, works best on iOS WKWebView
-  // country=RU avoids musics:// scheme redirect; entity=song returns previewUrl (30s HTTPS mp3)
-  const fetchITunes = () =>
-    fetchJsonSafe(`https://itunes.apple.com/search?term=${q}&entity=song&country=RU&limit=15`);
-
-  // Deezer — secondary: try direct first (CapacitorHttp patches fetch), then JSONP fallback
-  const fetchDeezerDirect = () =>
-    fetchJsonSafe(`https://api.deezer.com/search?q=${q}&limit=12`);
-
+  // JSONP helper for Deezer (short 2s timeout so it never stalls search)
   const fetchDeezerJsonp = () => new Promise((resolve) => {
+    const q = encodeURIComponent(query);
     const cbName = '__flyqa_jsonp_' + Math.random().toString(36).slice(2);
     const script = document.createElement('script');
     let settled = false;
     const finish = (val) => {
       if (settled) return;
       settled = true;
-      try { delete window[cbName]; } catch(e) {}
-      try { script.remove(); } catch(e) {}
+      try { delete window[cbName]; } catch (e) {}
+      try { script.remove(); } catch (e) {}
       resolve(val);
     };
-    const timer = setTimeout(() => finish(null), 7000);
+    const timer = setTimeout(() => finish(null), 2000);
     window[cbName] = (data) => { clearTimeout(timer); finish(data); };
     script.onerror = () => { clearTimeout(timer); finish(null); };
-    script.src = `https://api.deezer.com/search?q=${q}&limit=12&output=jsonp&callback=${cbName}`;
+    script.src = `https://api.deezer.com/search?q=${q}&limit=10&output=jsonp&callback=${cbName}`;
     document.head.appendChild(script);
   });
 
-  const fetchDeezer = async () => {
-    const direct = await fetchDeezerDirect();
-    if (direct && Array.isArray(direct.data) && direct.data.length) return direct;
-    return await fetchDeezerJsonp();
-  };
-
-  // Audius — tertiary, free music with stream URLs
-  const fetchAudius = async () => {
-    // Discover Audius API hosts first
-    let apiHost = 'https://discoveryprovider.audius.co';
-    try {
-      const hosts = await fetchJsonSafe('https://api.audius.co/');
-      if (hosts && Array.isArray(hosts.data) && hosts.data.length) {
-        apiHost = hosts.data[0];
-      }
-    } catch(e) {}
-    return fetchJsonSafe(`${apiHost}/v1/tracks/search?query=${q}&app_name=flyqa&limit=8`);
-  };
-
-  // Run all in parallel
-  const [itunesData, deezerData, audiusData] = await Promise.all([
-    fetchITunes(),
-    fetchDeezer(),
-    fetchAudius()
+  // Run all sources in parallel; total wait bounded cleanly to <= 3.5s
+  const [itunesRes, invRes, pipedRes, dzRes] = await Promise.allSettled([
+    fetchITunesDirect(query, 15),
+    fetchInvidiousSearch(query),
+    fetchPipedSearch(query),
+    fetchDeezerJsonp()
   ]);
 
-  // iTunes results (previewUrl = 30s HTTPS AAC preview)
-  if (itunesData && Array.isArray(itunesData.results)) {
-    for (const item of itunesData.results) {
-      if (!item.previewUrl) continue;
-      const art = (item.artworkUrl100 || '').replace('100x100bb', '600x600bb');
-      addUnique({
-        videoId: `it_${item.trackId}`,
-        title: item.trackName || 'Unknown Title',
-        artist: item.artistName || 'Unknown Artist',
-        duration: formatTime(Math.round((item.trackTimeMillis || 30000) / 1000)),
-        thumbnail: ensureHttpsUrl(art),
-        source: 'itunes',
-        webpageUrl: ensureHttpsUrl(item.previewUrl)
-      });
-    }
+  if (itunesRes.status === 'fulfilled' && Array.isArray(itunesRes.value)) {
+    itunesRes.value.forEach(addUnique);
   }
 
-  // Deezer results
-  if (deezerData && Array.isArray(deezerData.data)) {
-    for (const item of deezerData.data) {
+  if (dzRes.status === 'fulfilled' && dzRes.value && Array.isArray(dzRes.value.data)) {
+    for (const item of dzRes.value.data) {
       if (!item.preview) continue;
       addUnique({
         videoId: `dz_${item.id}`,
@@ -273,20 +401,11 @@ async function searchMusicDirectHTTPS(query) {
     }
   }
 
-  // Audius results (full stream URLs where available)
-  if (audiusData && Array.isArray(audiusData.data)) {
-    for (const item of audiusData.data.slice(0, 8)) {
-      if (!item.id) continue;
-      addUnique({
-        videoId: `au_${item.id}`,
-        title: item.title || 'Unknown Title',
-        artist: item.user?.name || item.user?.handle || 'Audius Artist',
-        duration: formatTime(item.duration || 0),
-        thumbnail: ensureHttpsUrl(item.artwork?.['480x480'] || item.artwork?.['150x150'] || ''),
-        source: 'audius',
-        webpageUrl: `https://discoveryprovider.audius.co/v1/tracks/${encodeURIComponent(item.id)}/stream?app_name=flyqa`
-      });
-    }
+  if (invRes.status === 'fulfilled' && Array.isArray(invRes.value)) {
+    invRes.value.forEach(addUnique);
+  }
+  if (pipedRes.status === 'fulfilled' && Array.isArray(pipedRes.value)) {
+    pipedRes.value.forEach(addUnique);
   }
 
   return results;
@@ -328,13 +447,17 @@ async function performSearch(query) {
     searchCache.set(cacheKey, data);
 
     if (!data.length) {
-      searchResults.innerHTML = `<div class="empty-state"><p>Ничего не найдено</p></div>`;
+      const offlineMsg = navigator.onLine === false
+        ? 'Нет подключения к интернету'
+        : 'Ничего не найдено';
+      searchResults.innerHTML = `<div class="empty-state"><p>${offlineMsg}</p></div>`;
       return;
     }
 
     searchResults.innerHTML = data.map((track, i) => createTrackHTML(track, 'search', i)).join('');
   } catch (err) {
-    searchResults.innerHTML = `<div class="empty-state"><p>Ошибка сети: ${escapeHTML(err.message)}</p></div>`;
+    console.warn('[flyqa] Search warning:', err);
+    searchResults.innerHTML = `<div class="empty-state"><p>Не удалось выполнить поиск. Проверьте интернет-соединение.</p></div>`;
   } finally {
     if (searchSpinner) searchSpinner.style.display = 'none';
   }
@@ -384,6 +507,7 @@ function createTrackHTML(track, context, index, options = {}) {
          data-duration="${escapeAttr(track.duration || '')}"
          data-thumbnail="${escapeAttr(thumb)}"
          data-source="${escapeAttr(track.source || 'youtube')}"
+         data-instance-base="${escapeAttr(track.instanceBase || '')}"
          data-local-path="${escapeAttr(track.localPath || track.local_path || '')}"
          data-webpage-url="${escapeAttr(track.webpageUrl || track.webpage_url || '')}"
          onclick="handleTrackClick(this, event)"
@@ -413,6 +537,7 @@ function getTrackData(el) {
     duration: el.dataset.duration,
     thumbnail: el.dataset.thumbnail,
     source: el.dataset.source || 'youtube',
+    instanceBase: el.dataset.instanceBase || '',
     localPath: el.dataset.localPath,
     webpageUrl: el.dataset.webpageUrl
   };
@@ -506,7 +631,56 @@ async function playTrack(track) {
   updatePlayIcon();
   highlightCurrentTrack();
 
-  // Audio Source setup: direct HTTPS stream, custom backend proxy, or HTTPS lookup fallback
+  // Audio Source setup: direct HTTPS stream, Invidious/Piped resolver, custom backend proxy, or iTunes HTTPS fallback
+  const playTrackToken = ++state._playToken || (state._playToken = 1);
+  const startAudioStream = async (url, allowNoCorsRetry = true) => {
+    // Wait for audio to load or fail (max 7s)
+    return await new Promise((resolve, reject) => {
+      let done = false;
+      const cleanup = () => {
+        clearTimeout(timer);
+        audio.removeEventListener('error', onErr);
+        audio.removeEventListener('canplay', onReady);
+      };
+      const finishOk = () => {
+        if (done) return;
+        done = true;
+        cleanup();
+        resolve();
+      };
+      const finishErr = (err) => {
+        if (done) return;
+        done = true;
+        cleanup();
+        reject(err);
+      };
+      const onErr = () => finishErr(new Error('Audio stream load failed'));
+      const onReady = () => {
+        // Attempt playback as soon as buffered enough
+        audio.play().then(finishOk).catch(finishErr);
+      };
+      const timer = setTimeout(() => finishErr(new Error('Audio stream timeout')), 7000);
+
+      audio.addEventListener('error', onErr);
+      audio.addEventListener('canplay', onReady);
+
+      if (allowNoCorsRetry) {
+        audio.setAttribute('crossorigin', 'anonymous');
+      } else {
+        audio.removeAttribute('crossorigin');
+      }
+      audio.src = url;
+      audio.volume = state.volume;
+      audio.load();
+      audio.play().then(finishOk).catch((playErr) => {
+        // Ignore AbortError caused by rapid track switching or waiting for canplay
+        if (playErr && playErr.name === 'NotAllowedError') {
+          finishErr(playErr);
+        }
+      });
+    });
+  };
+
   try {
     const apiBase = getCustomBackendApi();
     let streamUrl = '';
@@ -518,32 +692,61 @@ async function playTrack(track) {
     } else if (apiBase && (track.videoId || track.webpageUrl)) {
       const id = track.videoId || encodeURIComponent(track.webpageUrl);
       streamUrl = `${apiBase}/audio/${id}`;
-    } else {
-      // Cloud playlist track saved from YouTube without local backend: resolve direct HTTPS stream
-      const query = `${track.artist && track.artist !== 'Unknown' ? track.artist + ' ' : ''}${track.title || ''}`.trim();
+    } else if (track.videoId && !track.videoId.startsWith('it_') && !track.videoId.startsWith('dz_')) {
+      streamUrl = await resolveYouTubeStreamViaInvidiousOrPiped(track.videoId, track.instanceBase || '');
+    }
+
+    // Fallback to iTunes HTTPS .m4a stream if YouTube/Invidious stream wasn't resolved
+    if (!streamUrl) {
+      const query = `${track.artist && track.artist !== 'Unknown' && track.artist !== 'YouTube Music' ? track.artist + ' ' : ''}${track.title || ''}`.trim();
       if (query) {
-        const matches = await searchMusicDirectHTTPS(query);
-        if (matches.length && matches[0].webpageUrl) {
-          streamUrl = matches[0].webpageUrl;
+        const itunesMatches = await fetchITunesDirect(query, 3);
+        if (itunesMatches.length && itunesMatches[0].webpageUrl) {
+          streamUrl = itunesMatches[0].webpageUrl;
         }
       }
     }
 
+    if (state._playToken !== playTrackToken) return;
+
     if (!streamUrl) {
-      showToast('Аудиопоток недоступен без сервера стриминга');
+      showToast('Аудиопоток недоступен для этого трека');
       state.isPlaying = false;
       updatePlayIcon();
       return;
     }
 
-    audio.src = streamUrl;
-    audio.volume = state.volume;
-    await audio.play();
+    try {
+      await startAudioStream(streamUrl, true);
+    } catch (firstErr) {
+      if (state._playToken !== playTrackToken) return;
+      // If Invidious/Piped or non-CORS stream failed, fall back to iTunes CORS-safe HTTPS .m4a stream
+      const query = `${track.artist && track.artist !== 'Unknown' && track.artist !== 'YouTube Music' ? track.artist + ' ' : ''}${track.title || ''}`.trim();
+      let fallbackUrl = '';
+      if (query && !streamUrl.includes('itunes.apple.com')) {
+        const itunesMatches = await fetchITunesDirect(query, 3);
+        if (itunesMatches.length && itunesMatches[0].webpageUrl) {
+          fallbackUrl = itunesMatches[0].webpageUrl;
+        }
+      }
+      if (state._playToken !== playTrackToken) return;
+      if (fallbackUrl) {
+        await startAudioStream(fallbackUrl, true);
+      } else {
+        // Last resort: retry without crossorigin attribute for servers missing ACAO headers
+        await startAudioStream(streamUrl, false);
+      }
+    }
+
+    if (state._playToken !== playTrackToken) return;
     $('.player-cover-wrap')?.classList.add('playing');
     window.audioVisualizer?.start();
   } catch (err) {
-    console.error('Play error:', err);
-    showToast('Ошибка воспроизведения: ' + (err.message || 'проверьте сеть'));
+    if (state._playToken !== playTrackToken) return;
+    console.warn('Play error:', err);
+    state.isPlaying = false;
+    updatePlayIcon();
+    showToast('Ошибка воспроизведения: проверьте интернет');
   }
 }
 

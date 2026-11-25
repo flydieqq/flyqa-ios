@@ -61,6 +61,13 @@
 
     audio.addEventListener('timeupdate', updateMediaPositionState);
     audio.addEventListener('loadedmetadata', updateMediaPositionState);
+
+    // Keep Web Audio context alive when returning from Lock Screen / background on iOS
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && global.audioEngine && !audio.paused) {
+        try { global.audioEngine.ensureRunning(); } catch (e) {}
+      }
+    });
   }
 
   function updateMediaSession(track) {
