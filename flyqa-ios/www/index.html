@@ -539,7 +539,7 @@
           <!-- Section 4: Network / Custom Streaming Server (Optional) -->
           <div class="settings-section glass-panel">
             <h3 class="section-title">Сеть и источник стриминга</h3>
-            <p class="section-desc">Автономный клиентский режим iOS (iTunes HTTPS + Invidious / Piped). Дополнительно можно указать URL вашего сервера flyqa.</p>
+            <p class="section-desc">Автономный клиентский режим iOS (полные треки Saavn / SoundCloud / Invidious / Piped). Дополнительно можно указать URL вашего сервера flyqa.</p>
             <div class="setting-row" style="flex-direction:column;align-items:stretch;gap:10px;">
               <input type="url" id="setting-api-url" class="modal-input" placeholder="https://your-server.example.com (необязательно)" style="margin:0;">
               <div style="display:flex;gap:8px;">
@@ -924,8 +924,9 @@
     </button>
   </nav>
 
-  <!-- Audio element -->
+  <!-- Audio elements (primary WebAudio-routed element + direct native HLS element for iOS .m3u8) -->
   <audio id="audio-element" preload="auto" playsinline="true" webkit-playsinline="true" crossorigin="anonymous"></audio>
+  <audio id="audio-hls-element" preload="auto" playsinline="true" webkit-playsinline="true"></audio>
 
   <!-- Supabase SDK & Singleton Service -->
   <script src="vendor/supabase.js"></script>

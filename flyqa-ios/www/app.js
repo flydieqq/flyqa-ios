@@ -27,7 +27,18 @@ function ensureHttpsUrl(url) {
 
 function isDirectAudioUrl(url) {
   if (!url || !/^https?:\/\//i.test(url)) return false;
-  return !/youtube\.com\/watch|youtu\.be\//i.test(url);
+  if (/youtube\.com\/watch|youtu\.be\/|soundcloud\.com\//i.test(url)) return false;
+  return true;
+}
+
+function decodeHtmlEntities(str) {
+  if (!str || typeof str !== 'string') return '';
+  return str
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;|&apos;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
 }
 
 // Application State
@@ -53,7 +64,10 @@ const colorCache = new Map();
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
-const audio = $('#audio-element');
+const primaryAudio = $('#audio-element');
+const hlsAudio = $('#audio-hls-element');
+let audio = primaryAudio;
+window.flyqaGetActiveAudio = () => audio;
 const bgCanvas = $('#bg-canvas');
 
 // ============================================================
@@ -215,29 +229,123 @@ async function fetchJsonWithTimeout(url, timeoutMs = 3500, extraHeaders = {}) {
   }
 }
 
-async function fetchITunesDirect(query, limit = 15) {
+let scClientId = 'Hpp4j7peQTPimFlKMjTX3y3mK2946b7y';
+
+async function refreshSoundCloudClientId() {
+  if (!isNativeCapacitor()) return scClientId;
+  try {
+    const res = await fetch('https://soundcloud.com/discover');
+    if (!res.ok) return scClientId;
+    const html = await res.text();
+    const scriptMatches = [...html.matchAll(/https:\/\/a-v2\.sndcdn\.com\/assets\/[^"]+\.js/g)].map(m => m[0]);
+    for (const sUrl of scriptMatches.slice(-4)) {
+      const sr = await fetch(sUrl);
+      if (!sr.ok) continue;
+      const js = await sr.text();
+      const cm = js.match(/client_id:"([a-zA-Z0-9]{20,40})"/);
+      if (cm && cm[1]) {
+        scClientId = cm[1];
+        return scClientId;
+      }
+    }
+  } catch (e) {}
+  return scClientId;
+}
+
+function pickBestSaavnStream(downloadUrlList) {
+  if (!Array.isArray(downloadUrlList) || !downloadUrlList.length) return '';
+  // Prefer 160kbps (fast, Range-friendly, ACAO:*), then 96kbps, then 320kbps, then last available
+  const order = ['160kbps', '96kbps', '320kbps', '48kbps'];
+  for (const q of order) {
+    const found = downloadUrlList.find(d => d.quality === q && d.url);
+    if (found) return ensureHttpsUrl(found.url);
+  }
+  return ensureHttpsUrl(downloadUrlList[downloadUrlList.length - 1]?.url || '');
+}
+
+async function fetchSaavnDirect(query, limit = 15) {
   const q = encodeURIComponent(query);
-  // entity=song&country=RU avoids musics:// redirect on iPhone UA and returns HTTPS .m4a previewUrl with ACAO: *
   const data = await fetchJsonWithTimeout(
-    `https://itunes.apple.com/search?term=${q}&entity=song&country=RU&limit=${limit}`,
-    3500
+    `https://saavn.sumit.co/api/search/songs?query=${q}&limit=${limit}`,
+    4000
   );
-  if (!data || !Array.isArray(data.results)) return [];
+  if (!data || !data.data || !Array.isArray(data.data.results)) return [];
   const tracks = [];
-  for (const item of data.results) {
-    if (!item.previewUrl) continue;
-    const art = (item.artworkUrl100 || '').replace('100x100bb', '600x600bb');
+  for (const item of data.data.results) {
+    const durSec = Number(item.duration || 0);
+    // Reject <45s snippets; require full-length tracks
+    if (durSec > 0 && durSec < 45) continue;
+    const streamUrl = pickBestSaavnStream(item.downloadUrl);
+    if (!streamUrl) continue;
+    const art = item.image?.[item.image.length - 1]?.url || item.image?.[0]?.url || '';
+    const artist = item.artists?.primary?.map(a => a.name).filter(Boolean).join(', ')
+      || item.artists?.all?.[0]?.name
+      || 'Unknown Artist';
     tracks.push({
-      videoId: `it_${item.trackId}`,
-      title: item.trackName || 'Unknown Title',
-      artist: item.artistName || 'Unknown Artist',
-      duration: formatTime(Math.round((item.trackTimeMillis || 30000) / 1000)),
+      videoId: `sv_${item.id}`,
+      title: decodeHtmlEntities(item.name || 'Unknown Title'),
+      artist: decodeHtmlEntities(artist),
+      duration: durSec ? formatTime(durSec) : '',
       thumbnail: ensureHttpsUrl(art),
-      source: 'itunes',
-      webpageUrl: ensureHttpsUrl(item.previewUrl)
+      source: 'saavn',
+      webpageUrl: streamUrl
     });
   }
   return tracks;
+}
+
+async function fetchSoundCloudSearch(query, limit = 12) {
+  if (!isNativeCapacitor()) return [];
+  const q = encodeURIComponent(query);
+  let data = await fetchJsonWithTimeout(
+    `https://api-v2.soundcloud.com/search/tracks?q=${q}&client_id=${encodeURIComponent(scClientId)}&limit=${limit}`,
+    3500
+  );
+  if (!data || !Array.isArray(data.collection)) {
+    await refreshSoundCloudClientId();
+    data = await fetchJsonWithTimeout(
+      `https://api-v2.soundcloud.com/search/tracks?q=${q}&client_id=${encodeURIComponent(scClientId)}&limit=${limit}`,
+      3500
+    );
+  }
+  if (!data || !Array.isArray(data.collection)) return [];
+
+  const tracks = [];
+  for (const item of data.collection) {
+    const durSec = Math.round((item.duration || 0) / 1000);
+    // Strictly reject 30s Go+ previews (policy === 'SNIP' or short snippets < 45s)
+    if (item.policy === 'SNIP' || durSec < 45) continue;
+    const transcodings = item.media?.transcodings || [];
+    const chosen = transcodings.find(x => x.format?.protocol === 'progressive' && x.url)
+      || transcodings.find(x => x.format?.protocol === 'hls' && /mp4|aac/i.test(x.format?.mime_type || '') && x.url)
+      || transcodings.find(x => x.format?.protocol === 'hls' && x.url);
+    if (!chosen) continue;
+
+    const art = (item.artwork_url || item.user?.avatar_url || '').replace('-large.', '-t500x500.');
+    tracks.push({
+      videoId: `sc_${item.id}`,
+      title: item.title || 'Unknown Title',
+      artist: item.user?.username || 'SoundCloud Artist',
+      duration: formatTime(durSec),
+      thumbnail: ensureHttpsUrl(art),
+      source: 'soundcloud',
+      scTranscodingUrl: chosen.url,
+      scTrackAuth: item.track_authorization || '',
+      webpageUrl: ensureHttpsUrl(item.permalink_url || '')
+    });
+  }
+  return tracks;
+}
+
+async function resolveSoundCloudStreamUrl(track) {
+  if (!track || !track.scTranscodingUrl || !isNativeCapacitor()) return '';
+  const sep = track.scTranscodingUrl.includes('?') ? '&' : '?';
+  const authPart = track.scTrackAuth ? `&track_authorization=${encodeURIComponent(track.scTrackAuth)}` : '';
+  const data = await fetchJsonWithTimeout(
+    `${track.scTranscodingUrl}${sep}client_id=${encodeURIComponent(scClientId)}${authPart}`,
+    3500
+  );
+  return data && data.url ? ensureHttpsUrl(data.url) : '';
 }
 
 async function fetchInvidiousSearch(query) {
@@ -250,6 +358,7 @@ async function fetchInvidiousSearch(query) {
     const tracks = [];
     for (const item of data.slice(0, 12)) {
       if (!item.videoId || item.liveNow) continue;
+      if (item.lengthSeconds && item.lengthSeconds < 45) continue;
       const thumb = item.videoThumbnails?.[0]?.url || `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg`;
       tracks.push({
         videoId: item.videoId,
@@ -284,6 +393,7 @@ async function fetchPipedSearch(query) {
       const match = (item.url || '').match(/[?&]v=([^&]+)/);
       const videoId = match ? match[1] : '';
       if (!videoId || item.isShort) continue;
+      if (item.duration && item.duration < 45) continue;
       tracks.push({
         videoId,
         title: item.title || 'Unknown Title',
@@ -307,7 +417,7 @@ async function fetchPipedSearch(query) {
 }
 
 async function resolveYouTubeStreamViaInvidiousOrPiped(videoId, preferredBase = '') {
-  if (!videoId || videoId.startsWith('it_') || videoId.startsWith('dz_')) return '';
+  if (!videoId || /^(it_|dz_|sv_|sc_)/.test(videoId)) return '';
 
   const invPool = isNativeCapacitor() ? INVIDIOUS_NATIVE_INSTANCES : INVIDIOUS_CORS_INSTANCES;
   const invOrder = preferredBase && invPool.includes(preferredBase)
@@ -354,53 +464,25 @@ async function searchMusicDirectHTTPS(query) {
     results.push(track);
   };
 
-  // JSONP helper for Deezer (short 2s timeout so it never stalls search)
-  const fetchDeezerJsonp = () => new Promise((resolve) => {
-    const q = encodeURIComponent(query);
-    const cbName = '__flyqa_jsonp_' + Math.random().toString(36).slice(2);
-    const script = document.createElement('script');
-    let settled = false;
-    const finish = (val) => {
-      if (settled) return;
-      settled = true;
-      try { delete window[cbName]; } catch (e) {}
-      try { script.remove(); } catch (e) {}
-      resolve(val);
-    };
-    const timer = setTimeout(() => finish(null), 2000);
-    window[cbName] = (data) => { clearTimeout(timer); finish(data); };
-    script.onerror = () => { clearTimeout(timer); finish(null); };
-    script.src = `https://api.deezer.com/search?q=${q}&limit=10&output=jsonp&callback=${cbName}`;
-    document.head.appendChild(script);
-  });
-
-  // Run all sources in parallel; total wait bounded cleanly to <= 3.5s
-  const [itunesRes, invRes, pipedRes, dzRes] = await Promise.allSettled([
-    fetchITunesDirect(query, 15),
+  // Run full-length HTTPS audio sources in parallel (never 30s demo previews)
+  const [scRes, saavnRes, invRes, pipedRes] = await Promise.allSettled([
+    fetchSoundCloudSearch(query, 12),
+    fetchSaavnDirect(query, 15),
     fetchInvidiousSearch(query),
-    fetchPipedSearch(query),
-    fetchDeezerJsonp()
+    fetchPipedSearch(query)
   ]);
 
-  if (itunesRes.status === 'fulfilled' && Array.isArray(itunesRes.value)) {
-    itunesRes.value.forEach(addUnique);
+  // 1. SoundCloud full tracks on native iOS (best RU + global exact catalog match)
+  if (scRes.status === 'fulfilled' && Array.isArray(scRes.value)) {
+    scRes.value.forEach(addUnique);
   }
 
-  if (dzRes.status === 'fulfilled' && dzRes.value && Array.isArray(dzRes.value.data)) {
-    for (const item of dzRes.value.data) {
-      if (!item.preview) continue;
-      addUnique({
-        videoId: `dz_${item.id}`,
-        title: item.title || 'Unknown Title',
-        artist: item.artist?.name || 'Unknown Artist',
-        duration: formatTime(item.duration || 30),
-        thumbnail: ensureHttpsUrl(item.album?.cover_big || item.album?.cover_medium || ''),
-        source: 'deezer',
-        webpageUrl: ensureHttpsUrl(item.preview)
-      });
-    }
+  // 2. Saavn full-length HTTPS .mp4 AAC tracks (works everywhere with Range + ACAO: *)
+  if (saavnRes.status === 'fulfilled' && Array.isArray(saavnRes.value)) {
+    saavnRes.value.forEach(addUnique);
   }
 
+  // 3. Invidious / Piped full YouTube Music tracks
   if (invRes.status === 'fulfilled' && Array.isArray(invRes.value)) {
     invRes.value.forEach(addUnique);
   }
@@ -508,6 +590,8 @@ function createTrackHTML(track, context, index, options = {}) {
          data-thumbnail="${escapeAttr(thumb)}"
          data-source="${escapeAttr(track.source || 'youtube')}"
          data-instance-base="${escapeAttr(track.instanceBase || '')}"
+         data-sc-transcoding="${escapeAttr(track.scTranscodingUrl || '')}"
+         data-sc-auth="${escapeAttr(track.scTrackAuth || '')}"
          data-local-path="${escapeAttr(track.localPath || track.local_path || '')}"
          data-webpage-url="${escapeAttr(track.webpageUrl || track.webpage_url || '')}"
          onclick="handleTrackClick(this, event)"
@@ -538,6 +622,8 @@ function getTrackData(el) {
     thumbnail: el.dataset.thumbnail,
     source: el.dataset.source || 'youtube',
     instanceBase: el.dataset.instanceBase || '',
+    scTranscodingUrl: el.dataset.scTranscoding || '',
+    scTrackAuth: el.dataset.scAuth || '',
     localPath: el.dataset.localPath,
     webpageUrl: el.dataset.webpageUrl
   };
@@ -631,16 +717,34 @@ async function playTrack(track) {
   updatePlayIcon();
   highlightCurrentTrack();
 
-  // Audio Source setup: direct HTTPS stream, Invidious/Piped resolver, custom backend proxy, or iTunes HTTPS fallback
+  // Audio Source setup: full-length HTTPS stream (Saavn / SoundCloud / Invidious / Piped / custom server)
   const playTrackToken = ++state._playToken || (state._playToken = 1);
-  const startAudioStream = async (url, allowNoCorsRetry = true) => {
-    // Wait for audio to load or fail (max 7s)
+  const startAudioStream = async (url, allowCorsAttr = true) => {
+    const isHlsStream = /\.m3u8(\?|$)|mpegurl/i.test(url);
+    // Use direct element for native iOS HLS (.m3u8) or non-CORS fallback streams so createMediaElementSource never mutes audio
+    const useDirectEl = (isHlsStream || !allowCorsAttr) && hlsAudio;
+    const targetEl = useDirectEl ? hlsAudio : primaryAudio;
+    const otherEl = targetEl === primaryAudio ? hlsAudio : primaryAudio;
+
+    if (otherEl) {
+      try {
+        otherEl.pause();
+        otherEl.removeAttribute('src');
+        otherEl.load();
+      } catch (e) {}
+    }
+    audio = targetEl;
+    if (audio === primaryAudio) {
+      window.audioEngine.init(primaryAudio);
+      window.audioEngine.ensureRunning();
+    }
+
     return await new Promise((resolve, reject) => {
       let done = false;
       const cleanup = () => {
         clearTimeout(timer);
-        audio.removeEventListener('error', onErr);
-        audio.removeEventListener('canplay', onReady);
+        targetEl.removeEventListener('error', onErr);
+        targetEl.removeEventListener('canplay', onReady);
       };
       const finishOk = () => {
         if (done) return;
@@ -656,29 +760,46 @@ async function playTrack(track) {
       };
       const onErr = () => finishErr(new Error('Audio stream load failed'));
       const onReady = () => {
-        // Attempt playback as soon as buffered enough
-        audio.play().then(finishOk).catch(finishErr);
+        targetEl.play().then(finishOk).catch(finishErr);
       };
-      const timer = setTimeout(() => finishErr(new Error('Audio stream timeout')), 7000);
+      const timer = setTimeout(() => finishErr(new Error('Audio stream timeout')), 8000);
 
-      audio.addEventListener('error', onErr);
-      audio.addEventListener('canplay', onReady);
+      targetEl.addEventListener('error', onErr);
+      targetEl.addEventListener('canplay', onReady);
 
-      if (allowNoCorsRetry) {
-        audio.setAttribute('crossorigin', 'anonymous');
+      if (targetEl === primaryAudio && allowCorsAttr) {
+        targetEl.setAttribute('crossorigin', 'anonymous');
       } else {
-        audio.removeAttribute('crossorigin');
+        targetEl.removeAttribute('crossorigin');
       }
-      audio.src = url;
-      audio.volume = state.volume;
-      audio.load();
-      audio.play().then(finishOk).catch((playErr) => {
-        // Ignore AbortError caused by rapid track switching or waiting for canplay
+      targetEl.src = url;
+      targetEl.volume = state.volume;
+      targetEl.load();
+      targetEl.play().then(finishOk).catch((playErr) => {
         if (playErr && playErr.name === 'NotAllowedError') {
           finishErr(playErr);
         }
       });
     });
+  };
+
+  const resolveFullFallbackUrl = async (excludeSaavn = false) => {
+    const query = `${track.artist && track.artist !== 'Unknown' && track.artist !== 'YouTube Music' ? track.artist + ' ' : ''}${track.title || ''}`.trim();
+    if (!query) return '';
+    if (isNativeCapacitor()) {
+      const scMatches = await fetchSoundCloudSearch(query, 3);
+      if (scMatches.length) {
+        const scUrl = await resolveSoundCloudStreamUrl(scMatches[0]);
+        if (scUrl) return scUrl;
+      }
+    }
+    if (!excludeSaavn) {
+      const svMatches = await fetchSaavnDirect(query, 3);
+      if (svMatches.length && svMatches[0].webpageUrl) {
+        return svMatches[0].webpageUrl;
+      }
+    }
+    return '';
   };
 
   try {
@@ -687,30 +808,26 @@ async function playTrack(track) {
 
     if (track.source === 'local' && track.localPath && apiBase) {
       streamUrl = `${apiBase}/local-file?path=${encodeURIComponent(track.localPath)}`;
+    } else if (track.source === 'soundcloud' && track.scTranscodingUrl) {
+      streamUrl = await resolveSoundCloudStreamUrl(track);
     } else if (isDirectAudioUrl(track.webpageUrl)) {
       streamUrl = ensureHttpsUrl(track.webpageUrl);
     } else if (apiBase && (track.videoId || track.webpageUrl)) {
       const id = track.videoId || encodeURIComponent(track.webpageUrl);
       streamUrl = `${apiBase}/audio/${id}`;
-    } else if (track.videoId && !track.videoId.startsWith('it_') && !track.videoId.startsWith('dz_')) {
+    } else if (track.videoId && !/^(it_|dz_|sv_|sc_)/.test(track.videoId)) {
       streamUrl = await resolveYouTubeStreamViaInvidiousOrPiped(track.videoId, track.instanceBase || '');
     }
 
-    // Fallback to iTunes HTTPS .m4a stream if YouTube/Invidious stream wasn't resolved
+    // Fallback to full-length SoundCloud / Saavn track if primary resolver returned empty
     if (!streamUrl) {
-      const query = `${track.artist && track.artist !== 'Unknown' && track.artist !== 'YouTube Music' ? track.artist + ' ' : ''}${track.title || ''}`.trim();
-      if (query) {
-        const itunesMatches = await fetchITunesDirect(query, 3);
-        if (itunesMatches.length && itunesMatches[0].webpageUrl) {
-          streamUrl = itunesMatches[0].webpageUrl;
-        }
-      }
+      streamUrl = await resolveFullFallbackUrl(false);
     }
 
     if (state._playToken !== playTrackToken) return;
 
     if (!streamUrl) {
-      showToast('Аудиопоток недоступен для этого трека');
+      showToast('Полный аудиопоток недоступен для этого трека');
       state.isPlaying = false;
       updatePlayIcon();
       return;
@@ -720,27 +837,20 @@ async function playTrack(track) {
       await startAudioStream(streamUrl, true);
     } catch (firstErr) {
       if (state._playToken !== playTrackToken) return;
-      // If Invidious/Piped or non-CORS stream failed, fall back to iTunes CORS-safe HTTPS .m4a stream
-      const query = `${track.artist && track.artist !== 'Unknown' && track.artist !== 'YouTube Music' ? track.artist + ' ' : ''}${track.title || ''}`.trim();
-      let fallbackUrl = '';
-      if (query && !streamUrl.includes('itunes.apple.com')) {
-        const itunesMatches = await fetchITunesDirect(query, 3);
-        if (itunesMatches.length && itunesMatches[0].webpageUrl) {
-          fallbackUrl = itunesMatches[0].webpageUrl;
-        }
-      }
+      const fallbackUrl = await resolveFullFallbackUrl(streamUrl.includes('saavncdn.com'));
       if (state._playToken !== playTrackToken) return;
-      if (fallbackUrl) {
+      if (fallbackUrl && fallbackUrl !== streamUrl) {
         await startAudioStream(fallbackUrl, true);
       } else {
-        // Last resort: retry without crossorigin attribute for servers missing ACAO headers
         await startAudioStream(streamUrl, false);
       }
     }
 
     if (state._playToken !== playTrackToken) return;
     $('.player-cover-wrap')?.classList.add('playing');
-    window.audioVisualizer?.start();
+    if (audio === primaryAudio) {
+      window.audioVisualizer?.start();
+    }
   } catch (err) {
     if (state._playToken !== playTrackToken) return;
     console.warn('Play error:', err);
@@ -839,48 +949,58 @@ function playPrev() {
   if (state.currentView === 'queue') updateQueueView();
 }
 
-// Progress Bar & Audio Events
-audio.addEventListener('play', () => {
-  state.isPlaying = true;
-  updatePlayIcon();
-  $('.player-cover-wrap')?.classList.add('playing');
-});
+// Progress Bar & Audio Events (attached to both primary & HLS audio elements)
+[primaryAudio, hlsAudio].filter(Boolean).forEach((el) => {
+  el.addEventListener('play', () => {
+    if (el !== audio) return;
+    state.isPlaying = true;
+    updatePlayIcon();
+    $('.player-cover-wrap')?.classList.add('playing');
+  });
 
-audio.addEventListener('pause', () => {
-  state.isPlaying = false;
-  updatePlayIcon();
-  $('.player-cover-wrap')?.classList.remove('playing');
-});
+  el.addEventListener('pause', () => {
+    if (el !== audio) return;
+    state.isPlaying = false;
+    updatePlayIcon();
+    $('.player-cover-wrap')?.classList.remove('playing');
+  });
 
-audio.addEventListener('timeupdate', () => {
-  if (!audio.duration) return;
-  const pct = (audio.currentTime / audio.duration) * 100;
-  if (progressFill) progressFill.style.width = pct + '%';
-  if (progressThumb) progressThumb.style.left = pct + '%';
-  if (timeCurrent) timeCurrent.textContent = formatTime(audio.currentTime);
+  el.addEventListener('timeupdate', () => {
+    if (el !== audio || !audio.duration || !isFinite(audio.duration)) return;
+    const pct = (audio.currentTime / audio.duration) * 100;
+    if (progressFill) progressFill.style.width = pct + '%';
+    if (progressThumb) progressThumb.style.left = pct + '%';
+    if (timeCurrent) timeCurrent.textContent = formatTime(audio.currentTime);
 
-  const fsFill = $('#fs-progress-fill');
-  const fsThumb = $('#fs-progress-thumb');
-  const fsTimeCur = $('#fs-time-current');
-  if (fsFill) fsFill.style.width = pct + '%';
-  if (fsThumb) fsThumb.style.left = pct + '%';
-  if (fsTimeCur) fsTimeCur.textContent = formatTime(audio.currentTime);
-});
+    const fsFill = $('#fs-progress-fill');
+    const fsThumb = $('#fs-progress-thumb');
+    const fsTimeCur = $('#fs-time-current');
+    if (fsFill) fsFill.style.width = pct + '%';
+    if (fsThumb) fsThumb.style.left = pct + '%';
+    if (fsTimeCur) fsTimeCur.textContent = formatTime(audio.currentTime);
+  });
 
-audio.addEventListener('loadedmetadata', () => {
-  const tot = formatTime(audio.duration);
-  if (timeTotal) timeTotal.textContent = tot;
-  const fsTimeTot = $('#fs-time-total');
-  if (fsTimeTot) fsTimeTot.textContent = tot;
-});
+  el.addEventListener('loadedmetadata', () => {
+    if (el !== audio || !audio.duration || !isFinite(audio.duration)) return;
+    const tot = formatTime(audio.duration);
+    if (timeTotal) timeTotal.textContent = tot;
+    const fsTimeTot = $('#fs-time-total');
+    if (fsTimeTot) fsTimeTot.textContent = tot;
+  });
 
-audio.addEventListener('ended', () => {
-  playNext();
+  el.addEventListener('ended', () => {
+    if (el !== audio) return;
+    // Only advance when the full track actually reaches its end
+    if (audio.duration && isFinite(audio.duration) && audio.currentTime + 1.5 < audio.duration) {
+      return;
+    }
+    playNext();
+  });
 });
 
 // Seeking
 progressBarWrap?.addEventListener('click', (e) => {
-  if (!audio.duration) return;
+  if (!audio || !audio.duration) return;
   const rect = progressBarWrap.getBoundingClientRect();
   const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
   audio.currentTime = pct * audio.duration;
@@ -1320,15 +1440,18 @@ function initFullscreenPlayerUI() {
     updateVolumeIcon();
   });
 
-  // Extended Fullscreen Seek Bar (zero idle mousemove overhead)
+  // Extended Fullscreen Seek Bar (mouse + iOS touch seek support)
   const fsProgressWrap = $('#fs-progress-wrap');
   const fsProgressTooltip = $('#fs-progress-tooltip');
 
   if (fsProgressWrap) {
+    const getClientX = (e) => (e.touches && e.touches[0] ? e.touches[0].clientX : (e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientX : e.clientX));
     const handleFsSeek = (e) => {
-      if (!audio.duration) return;
+      if (!audio || !audio.duration || !isFinite(audio.duration)) return;
+      const clientX = getClientX(e);
+      if (typeof clientX !== 'number') return;
       const rect = fsProgressWrap.getBoundingClientRect();
-      const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
       audio.currentTime = pct * audio.duration;
     };
 
@@ -1344,8 +1467,15 @@ function initFullscreenPlayerUI() {
       window.addEventListener('mouseup', onDragEnd);
     });
 
+    fsProgressWrap.addEventListener('touchstart', (e) => {
+      handleFsSeek(e);
+    }, { passive: true });
+    fsProgressWrap.addEventListener('touchmove', (e) => {
+      handleFsSeek(e);
+    }, { passive: true });
+
     fsProgressWrap.addEventListener('mousemove', (e) => {
-      if (!audio.duration || !fsProgressTooltip) return;
+      if (!audio || !audio.duration || !fsProgressTooltip) return;
       const rect = fsProgressWrap.getBoundingClientRect();
       const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
       fsProgressTooltip.style.left = `${pct * 100}%`;

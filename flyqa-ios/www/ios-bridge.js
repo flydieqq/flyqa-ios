@@ -8,11 +8,18 @@
   const SILENT_WAV = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
   let iosAudioUnlocked = false;
 
+  function getActiveAudio() {
+    if (typeof global.flyqaGetActiveAudio === 'function') {
+      return global.flyqaGetActiveAudio() || $('#audio-element');
+    }
+    return $('#audio-element');
+  }
+
   function primeAudioForGesture() {
-    const audio = $('#audio-element');
-    if (global.audioEngine && audio) {
+    const audio = getActiveAudio();
+    if (global.audioEngine && $('#audio-element')) {
       try {
-        global.audioEngine.init(audio);
+        global.audioEngine.init($('#audio-element'));
         global.audioEngine.ensureRunning();
       } catch (e) {}
     }
@@ -35,11 +42,21 @@
   }
 
   function initAudioElementForIOS() {
-    const audio = $('#audio-element');
-    if (!audio) return;
-    audio.setAttribute('playsinline', 'true');
-    audio.setAttribute('webkit-playsinline', 'true');
-    audio.setAttribute('crossorigin', 'anonymous');
+    const primary = $('#audio-element');
+    const hls = $('#audio-hls-element');
+    const elements = [primary, hls].filter(Boolean);
+    if (!elements.length) return;
+
+    if (primary) {
+      primary.setAttribute('playsinline', 'true');
+      primary.setAttribute('webkit-playsinline', 'true');
+      primary.setAttribute('crossorigin', 'anonymous');
+    }
+    if (hls) {
+      hls.setAttribute('playsinline', 'true');
+      hls.setAttribute('webkit-playsinline', 'true');
+      hls.removeAttribute('crossorigin');
+    }
 
     const unlockOnce = () => {
       primeAudioForGesture();
@@ -47,24 +64,33 @@
     document.addEventListener('touchstart', unlockOnce, { once: true, capture: true, passive: true });
     document.addEventListener('click', unlockOnce, { once: true, capture: true });
 
-    audio.addEventListener('play', () => {
-      if ('mediaSession' in navigator) {
-        navigator.mediaSession.playbackState = 'playing';
-      }
-    });
+    elements.forEach((el) => {
+      el.addEventListener('play', () => {
+        if (el !== getActiveAudio()) return;
+        if ('mediaSession' in navigator) {
+          navigator.mediaSession.playbackState = 'playing';
+        }
+      });
 
-    audio.addEventListener('pause', () => {
-      if ('mediaSession' in navigator) {
-        navigator.mediaSession.playbackState = 'paused';
-      }
-    });
+      el.addEventListener('pause', () => {
+        if (el !== getActiveAudio()) return;
+        if ('mediaSession' in navigator) {
+          navigator.mediaSession.playbackState = 'paused';
+        }
+      });
 
-    audio.addEventListener('timeupdate', updateMediaPositionState);
-    audio.addEventListener('loadedmetadata', updateMediaPositionState);
+      el.addEventListener('timeupdate', () => {
+        if (el === getActiveAudio()) updateMediaPositionState();
+      });
+      el.addEventListener('loadedmetadata', () => {
+        if (el === getActiveAudio()) updateMediaPositionState();
+      });
+    });
 
     // Keep Web Audio context alive when returning from Lock Screen / background on iOS
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden && global.audioEngine && !audio.paused) {
+      const active = getActiveAudio();
+      if (!document.hidden && global.audioEngine && active && !active.paused && active === primary) {
         try { global.audioEngine.ensureRunning(); } catch (e) {}
       }
     });
@@ -89,7 +115,7 @@
   }
 
   function updateMediaPositionState() {
-    const audio = $('#audio-element');
+    const audio = getActiveAudio();
     if (!audio || !('mediaSession' in navigator) || !navigator.mediaSession.setPositionState) return;
     if (!audio.duration || isNaN(audio.duration) || !isFinite(audio.duration)) return;
 
@@ -104,7 +130,6 @@
 
   function registerMediaSessionHandlers() {
     if (!('mediaSession' in navigator)) return;
-    const audio = $('#audio-element');
 
     const safeSet = (action, handler) => {
       try {
@@ -113,11 +138,13 @@
     };
 
     safeSet('play', () => {
+      const audio = getActiveAudio();
       if (typeof global.togglePlay === 'function' && audio?.paused) global.togglePlay();
       else audio?.play();
     });
 
     safeSet('pause', () => {
+      const audio = getActiveAudio();
       if (typeof global.togglePlay === 'function' && audio && !audio.paused) global.togglePlay();
       else audio?.pause();
     });
@@ -131,6 +158,7 @@
     });
 
     safeSet('seekto', (details) => {
+      const audio = getActiveAudio();
       if (audio && details && typeof details.seekTime === 'number') {
         audio.currentTime = details.seekTime;
         updateMediaPositionState();
@@ -138,6 +166,7 @@
     });
 
     safeSet('seekbackward', (details) => {
+      const audio = getActiveAudio();
       if (audio) {
         audio.currentTime = Math.max(0, audio.currentTime - (details?.seekOffset || 10));
         updateMediaPositionState();
@@ -145,6 +174,7 @@
     });
 
     safeSet('seekforward', (details) => {
+      const audio = getActiveAudio();
       if (audio && audio.duration) {
         audio.currentTime = Math.min(audio.duration, audio.currentTime + (details?.seekOffset || 10));
         updateMediaPositionState();
