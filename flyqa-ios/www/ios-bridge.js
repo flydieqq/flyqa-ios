@@ -96,22 +96,40 @@
     });
   }
 
-  function updateMediaSession(track) {
+  function updateMediaSession(track, isPlaying) {
     if (!('mediaSession' in navigator) || !track) return;
     try {
-      const artwork = track.thumbnail
-        ? [{ src: track.thumbnail, sizes: '512x512', type: 'image/jpeg' }]
+      const thumb = track.thumbnail || '';
+      const artwork = thumb
+        ? [
+            { src: thumb, sizes: '96x96', type: 'image/jpeg' },
+            { src: thumb, sizes: '128x128', type: 'image/jpeg' },
+            { src: thumb, sizes: '192x192', type: 'image/jpeg' },
+            { src: thumb, sizes: '256x256', type: 'image/jpeg' },
+            { src: thumb, sizes: '384x384', type: 'image/jpeg' },
+            { src: thumb, sizes: '512x512', type: 'image/jpeg' }
+          ]
         : [];
 
       navigator.mediaSession.metadata = new MediaMetadata({
         title: track.title || 'flyqa',
         artist: track.artist || 'Unknown Artist',
-        album: 'flyqa',
+        album: track.album || 'flyqa',
         artwork
       });
+
+      if (typeof isPlaying === 'boolean') {
+        navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+      } else {
+        const audio = getActiveAudio();
+        navigator.mediaSession.playbackState = audio && !audio.paused ? 'playing' : 'playing';
+      }
     } catch (e) {
       // Ignore if MediaMetadata unsupported
     }
+
+    registerMediaSessionHandlers();
+    updateMediaPositionState();
   }
 
   function updateMediaPositionState() {
@@ -123,7 +141,7 @@
       navigator.mediaSession.setPositionState({
         duration: audio.duration,
         playbackRate: audio.playbackRate || 1,
-        position: Math.min(audio.currentTime || 0, audio.duration)
+        position: Math.min(Math.max(0, audio.currentTime || 0), audio.duration)
       });
     } catch (e) {}
   }
@@ -141,26 +159,34 @@
       const audio = getActiveAudio();
       if (typeof global.togglePlay === 'function' && audio?.paused) global.togglePlay();
       else audio?.play();
+      navigator.mediaSession.playbackState = 'playing';
     });
 
     safeSet('pause', () => {
       const audio = getActiveAudio();
       if (typeof global.togglePlay === 'function' && audio && !audio.paused) global.togglePlay();
       else audio?.pause();
+      navigator.mediaSession.playbackState = 'paused';
     });
 
     safeSet('previoustrack', () => {
-      if (typeof global.playPrev === 'function') global.playPrev();
+      if (typeof global.playPrevTrack === 'function') global.playPrevTrack();
+      else if (typeof global.playPrev === 'function') global.playPrev();
     });
 
     safeSet('nexttrack', () => {
-      if (typeof global.playNext === 'function') global.playNext();
+      if (typeof global.playNextTrack === 'function') global.playNextTrack();
+      else if (typeof global.playNext === 'function') global.playNext();
     });
 
     safeSet('seekto', (details) => {
       const audio = getActiveAudio();
       if (audio && details && typeof details.seekTime === 'number') {
-        audio.currentTime = details.seekTime;
+        if (details.fastSeek && typeof audio.fastSeek === 'function') {
+          audio.fastSeek(details.seekTime);
+        } else {
+          audio.currentTime = details.seekTime;
+        }
         updateMediaPositionState();
       }
     });
@@ -256,6 +282,7 @@
     const sidebar = $('#sidebar');
     const backdrop = $('#ios-sidebar-backdrop');
     const authOverlay = $('#auth-modal-overlay');
+    const profileOverlay = $('#profile-modal-overlay');
     const contextMenu = $('#context-menu');
     const fullscreenPlayer = $('#fullscreen-player');
     const addPlaylistSheet = $('#add-to-playlist-overlay');
@@ -267,7 +294,13 @@
     }
     if (authOverlay && authOverlay.style.display !== 'none') {
       authOverlay.style.display = 'none';
+      authOverlay.classList.remove('is-open', 'is-closing');
       authOverlay.setAttribute('aria-hidden', 'true');
+    }
+    if (profileOverlay && profileOverlay.style.display !== 'none') {
+      profileOverlay.style.display = 'none';
+      profileOverlay.classList.remove('is-open', 'is-closing');
+      profileOverlay.setAttribute('aria-hidden', 'true');
     }
     if (addPlaylistSheet && addPlaylistSheet.style.display !== 'none') {
       if (typeof global.closeAddToPlaylistSheet === 'function') {
@@ -368,7 +401,11 @@
 
     authBtn?.addEventListener('click', () => {
       closeDrawer();
-      $('#btn-open-auth')?.click();
+      if (global.supabaseService?.isAuthenticated?.() && typeof global.openProfileModal === 'function') {
+        global.openProfileModal();
+      } else {
+        $('#btn-open-auth')?.click();
+      }
     });
 
     $('#btn-mobile-new-playlist')?.addEventListener('click', () => {

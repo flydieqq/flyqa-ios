@@ -82,17 +82,14 @@ if (window.electronAPI) {
 // ============================================================
 //  2. Navigation & View Switching
 // ============================================================
-const VIEW_ORDER = ['search', 'mobile-playlists', 'playlist', 'queue', 'local', 'equalizer', 'visualizer', 'settings'];
+const VIEW_ORDER = ['search', 'mobile-playlists', 'playlist', 'queue', 'local', 'offline', 'equalizer', 'visualizer', 'settings'];
+let _viewAnimTimer = null;
 
 function switchView(viewName, playlistId = null) {
   window.flyqaIOS?.closeAllOverlays?.();
 
   const prevView = state.currentView;
-  const prevIdx = VIEW_ORDER.indexOf(prevView);
-  const nextIdx = VIEW_ORDER.indexOf(viewName);
-  const slideDir = (prevIdx !== -1 && nextIdx !== -1 && nextIdx !== prevIdx)
-    ? (nextIdx > prevIdx ? 'slide-from-right' : 'slide-from-left')
-    : 'slide-from-bottom';
+  const isSameView = prevView === viewName && viewName !== 'playlist';
 
   // Update sidebar active states
   $$('.sidebar-item').forEach(el => el.classList.remove('active'));
@@ -101,8 +98,29 @@ function switchView(viewName, playlistId = null) {
   const navBtn = $(`[data-view="${viewName}"]`);
   if (navBtn) navBtn.classList.add('active');
 
-  // Hide all views & reset directional classes
-  $$('.view').forEach(v => v.classList.remove('active', 'slide-from-right', 'slide-from-left', 'slide-from-bottom'));
+  if (isSameView) {
+    window.flyqaIOS?.syncTabBar?.(viewName);
+    return;
+  }
+
+  const prevIdx = VIEW_ORDER.indexOf(prevView);
+  const nextIdx = VIEW_ORDER.indexOf(viewName);
+  const goingForward = prevIdx !== -1 && nextIdx !== -1 ? nextIdx >= prevIdx : true;
+  const slideDir = (prevIdx !== -1 && nextIdx !== -1 && nextIdx !== prevIdx)
+    ? (goingForward ? 'slide-from-right' : 'slide-from-left')
+    : 'slide-from-bottom';
+
+  if (_viewAnimTimer) {
+    clearTimeout(_viewAnimTimer);
+    _viewAnimTimer = null;
+  }
+
+  const prevViewEl = prevView ? $(`#view-${prevView}`) : null;
+
+  // Reset all transition helper classes before applying the single clean transition
+  $$('.view').forEach(v => {
+    v.classList.remove('active', 'is-entering', 'is-leaving', 'slide-from-right', 'slide-from-left', 'slide-from-bottom', 'slide-to-left', 'slide-to-right');
+  });
 
   if (viewName === 'playlist' && playlistId) {
     state.currentPlaylistId = playlistId;
@@ -120,6 +138,8 @@ function switchView(viewName, playlistId = null) {
       updateQueueView();
     } else if (viewName === 'equalizer') {
       renderEqualizerUI();
+    } else if (viewName === 'offline' || viewName === 'mobile-playlists') {
+      renderOfflineTracksView();
     } else if (viewName === 'visualizer') {
       requestAnimationFrame(() => window.audioVisualizer?.resize());
       setTimeout(() => window.audioVisualizer?.resize(), 120);
@@ -128,12 +148,34 @@ function switchView(viewName, playlistId = null) {
 
   window.flyqaIOS?.syncTabBar?.(viewName);
 
-  // Smooth GPU-accelerated Slide & Fade animation (no blur filter glitches on iOS)
   const activeView = $('.view.active');
-  if (activeView && !window.storageManager.getSetting('reduceMotion')) {
-    void activeView.offsetWidth; // force reflow for clean restart
-    activeView.classList.add(slideDir);
-    setTimeout(() => activeView.classList.remove(slideDir), 460);
+  const transStyle = window.storageManager.getSetting('transitionStyle') || 'ios-slide';
+  const reduceMotion = window.storageManager.getSetting('reduceMotion') || transStyle === 'minimal-instant';
+
+  if (activeView && !reduceMotion) {
+    if (transStyle === 'ios-slide' && prevViewEl && prevViewEl !== activeView) {
+      prevViewEl.classList.add('is-leaving', goingForward ? 'slide-to-left' : 'slide-to-right');
+    }
+
+    activeView.classList.add('is-entering', slideDir);
+
+    const cleanupTransition = () => {
+      activeView.classList.remove('is-entering', 'slide-from-right', 'slide-from-left', 'slide-from-bottom');
+      if (prevViewEl) {
+        prevViewEl.classList.remove('is-leaving', 'slide-to-left', 'slide-to-right');
+      }
+    };
+
+    const onAnimEnd = (e) => {
+      if (e.target !== activeView) return;
+      activeView.removeEventListener('animationend', onAnimEnd);
+      cleanupTransition();
+    };
+    activeView.addEventListener('animationend', onAnimEnd);
+    _viewAnimTimer = setTimeout(() => {
+      activeView.removeEventListener('animationend', onAnimEnd);
+      cleanupTransition();
+    }, 650);
   }
 }
 
@@ -141,6 +183,7 @@ function switchView(viewName, playlistId = null) {
 $('#nav-search')?.addEventListener('click', () => switchView('search'));
 $('#nav-queue')?.addEventListener('click', () => switchView('queue'));
 $('#nav-local')?.addEventListener('click', () => switchView('local'));
+$('#nav-offline')?.addEventListener('click', () => switchView('offline'));
 $('#nav-equalizer')?.addEventListener('click', () => switchView('equalizer'));
 $('#nav-visualizer')?.addEventListener('click', () => switchView('visualizer'));
 $('#nav-settings')?.addEventListener('click', () => switchView('settings'));
@@ -179,9 +222,7 @@ searchInput?.addEventListener('keydown', (e) => {
   }
 });
 
-const INVIDIOUS_CORS_INSTANCES = [
-  'https://yt.chocolatemoo53.com'
-];
+const INVIDIOUS_CORS_INSTANCES = [];
 
 const INVIDIOUS_NATIVE_INSTANCES = [
   'https://yt.chocolatemoo53.com',
@@ -226,8 +267,14 @@ async function fetchJsonWithTimeout(url, timeoutMs = 3500, extraHeaders = {}) {
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const isLocalDev = window.location &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') &&
+    window.location.port === '3457';
+  const reqUrl = (isLocalDev && /(jiosaavn\.com|saavn\.sumit\.co|soundcloud\.com)/i.test(url))
+    ? `/api/proxy-json?url=${encodeURIComponent(url)}`
+    : url;
   try {
-    const res = await fetch(url, { signal: controller.signal, headers });
+    const res = await fetch(reqUrl, { signal: controller.signal, headers });
     if (!res.ok) return null;
     return await res.json();
   } catch (e) {
@@ -260,10 +307,90 @@ async function refreshSoundCloudClientId() {
   return scClientId;
 }
 
+// Pure-JS DES-ECB Decryptor for official JioSaavn encrypted_media_url
+const _DES_IP = [58,50,42,34,26,18,10,2,60,52,44,36,28,20,12,4,62,54,46,38,30,22,14,6,64,56,48,40,32,24,16,8,57,49,41,33,25,17,9,1,59,51,43,35,27,19,11,3,61,53,45,37,29,21,13,5,63,55,47,39,31,23,15,7];
+const _DES_FP = [40,8,48,16,56,24,64,32,39,7,47,15,55,23,63,31,38,6,46,14,54,22,62,30,37,5,45,13,53,21,61,29,36,4,44,12,52,20,60,28,35,3,43,11,51,19,59,27,34,2,42,10,50,18,58,26,33,1,41,9,49,17,57,25];
+const _DES_PC1 = [57,49,41,33,25,17,9,1,58,50,42,34,26,18,10,2,59,51,43,35,27,19,11,3,60,52,44,36,63,55,47,39,31,23,15,7,62,54,46,38,30,22,14,6,61,53,45,37,29,21,13,5,28,20,12,4];
+const _DES_PC2 = [14,17,11,24,1,5,3,28,15,6,21,10,23,19,12,4,26,8,16,7,27,20,13,2,41,52,31,37,47,55,30,40,51,45,33,48,44,49,39,56,34,53,46,42,50,36,29,32];
+const _DES_E = [32,1,2,3,4,5,4,5,6,7,8,9,8,9,10,11,12,13,12,13,14,15,16,17,16,17,18,19,20,21,20,21,22,23,24,25,24,25,26,27,28,29,28,29,30,31,32,1];
+const _DES_P = [16,7,20,21,29,12,28,17,1,15,23,26,5,18,31,10,2,8,24,14,32,27,3,9,19,13,30,6,22,11,4,25];
+const _DES_SH = [1,1,2,2,2,2,2,2,1,2,2,2,2,2,2,1];
+const _DES_S = [
+  [14,4,13,1,2,15,11,8,3,10,6,12,5,9,0,7,0,15,7,4,14,2,13,1,10,6,12,11,9,5,3,8,4,1,14,8,13,6,2,11,15,12,9,7,3,10,5,0,15,12,8,2,4,9,1,7,5,11,3,14,10,0,6,13],
+  [15,1,8,14,6,11,3,4,9,7,2,13,12,0,5,10,3,13,4,7,15,2,8,14,12,0,1,10,6,9,11,5,0,14,7,11,10,4,13,1,5,8,12,6,9,3,2,15,13,8,10,1,3,15,4,2,11,6,7,12,0,5,14,9],
+  [10,0,9,14,6,3,15,5,1,13,12,7,11,4,2,8,13,7,0,9,3,4,6,10,2,8,5,14,12,11,15,1,13,6,4,9,8,15,3,0,11,1,2,12,5,10,14,7,1,10,13,0,6,9,8,7,4,15,14,3,11,5,2,12],
+  [7,13,14,3,0,6,9,10,1,2,8,5,11,12,4,15,13,8,11,5,6,15,0,3,4,7,2,12,1,10,14,9,10,6,9,0,12,11,7,13,15,1,3,14,5,2,8,4,3,15,0,6,10,1,13,8,9,4,5,11,12,7,2,14],
+  [2,12,4,1,7,10,11,6,8,5,3,15,13,0,14,9,14,11,2,12,4,7,13,1,5,0,15,10,3,9,8,6,4,2,1,11,10,13,7,8,15,9,12,5,6,3,0,14,11,8,12,7,1,14,2,13,6,15,0,9,10,4,5,3],
+  [12,1,10,15,9,2,6,8,0,13,3,4,14,7,5,11,10,15,4,2,7,12,9,5,6,1,13,14,0,11,3,8,9,14,15,5,2,8,12,3,7,0,4,10,1,13,11,6,4,3,2,12,9,5,15,10,11,14,1,7,6,0,8,13],
+  [4,11,2,14,15,0,8,13,3,12,9,7,5,10,6,1,13,0,11,7,4,9,1,10,14,3,5,12,2,15,8,6,1,4,11,13,12,3,7,14,10,15,6,8,0,5,9,2,6,11,13,8,1,4,10,7,9,5,0,15,14,2,3,12],
+  [13,2,8,4,6,15,11,1,10,9,3,14,5,0,12,7,1,15,13,8,10,3,7,4,12,5,6,11,0,14,9,2,7,11,4,1,9,12,14,2,0,6,10,13,15,3,5,8,2,1,14,7,4,10,8,13,15,12,9,0,3,5,6,11]
+];
+
+function decryptSaavnUrl(encryptedB64) {
+  if (!encryptedB64) return '';
+  try {
+    const perm = (bits, table) => table.map(i => bits[i - 1]);
+    const bytesToBits = (arr) => {
+      const out = [];
+      for (const v of arr) for (let i = 7; i >= 0; i--) out.push((v >> i) & 1);
+      return out;
+    };
+    const bitsToBytes = (bits) => {
+      const out = [];
+      for (let i = 0; i < bits.length; i += 8) {
+        let v = 0;
+        for (let j = 0; j < 8; j++) v = (v << 1) | bits[i + j];
+        out.push(v);
+      }
+      return out;
+    };
+    const keyBytes = Array.from('38346591', c => c.charCodeAt(0));
+    let cd = perm(bytesToBits(keyBytes), _DES_PC1);
+    let C = cd.slice(0, 28);
+    let D = cd.slice(28);
+    const keys = [];
+    for (let r = 0; r < 16; r++) {
+      C = C.slice(_DES_SH[r]).concat(C.slice(0, _DES_SH[r]));
+      D = D.slice(_DES_SH[r]).concat(D.slice(0, _DES_SH[r]));
+      keys.push(perm(C.concat(D), _DES_PC2));
+    }
+    const decKeys = keys.reverse();
+    const binStr = atob(encryptedB64.trim());
+    const raw = new Uint8Array(binStr.length);
+    for (let i = 0; i < binStr.length; i++) raw[i] = binStr.charCodeAt(i);
+    let res = [];
+    for (let off = 0; off + 8 <= raw.length; off += 8) {
+      const blk = perm(bytesToBits(raw.slice(off, off + 8)), _DES_IP);
+      let L = blk.slice(0, 32);
+      let R = blk.slice(32);
+      for (let r = 0; r < 16; r++) {
+        const er = perm(R, _DES_E).map((b, i) => b ^ decKeys[r][i]);
+        const sout = [];
+        for (let i = 0; i < 8; i++) {
+          const c = er.slice(i * 6, i * 6 + 6);
+          const row = (c[0] << 1) | c[5];
+          const col = (c[1] << 3) | (c[2] << 2) | (c[3] << 1) | c[4];
+          const val = _DES_S[i][row * 16 + col];
+          for (let j = 3; j >= 0; j--) sout.push((val >> j) & 1);
+        }
+        const f = perm(sout, _DES_P);
+        const nextR = L.map((b, i) => b ^ f[i]);
+        L = R;
+        R = nextR;
+      }
+      res.push(...bitsToBytes(perm(R.concat(L), _DES_FP)));
+    }
+    const pad = res[res.length - 1];
+    if (pad > 0 && pad <= 8) res = res.slice(0, res.length - pad);
+    return new TextDecoder().decode(new Uint8Array(res));
+  } catch (e) {
+    return '';
+  }
+}
+
 function pickBestSaavnStream(downloadUrlList) {
   if (!Array.isArray(downloadUrlList) || !downloadUrlList.length) return '';
-  // Prefer 160kbps (fast, Range-friendly, ACAO:*), then 96kbps, then 320kbps, then last available
-  const order = ['160kbps', '96kbps', '320kbps', '48kbps'];
+  const order = ['160kbps', '320kbps', '96kbps'];
   for (const q of order) {
     const found = downloadUrlList.find(d => d.quality === q && d.url);
     if (found) return ensureHttpsUrl(found.url);
@@ -271,30 +398,36 @@ function pickBestSaavnStream(downloadUrlList) {
   return ensureHttpsUrl(downloadUrlList[downloadUrlList.length - 1]?.url || '');
 }
 
-async function fetchSaavnDirect(query, limit = 15) {
+let saavnCooldownUntil = 0;
+
+async function fetchSaavnOfficial(query, limit = 15) {
   const q = encodeURIComponent(query);
   const data = await fetchJsonWithTimeout(
-    `https://saavn.sumit.co/api/search/songs?query=${q}&limit=${limit}`,
-    4000
+    `https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&api_version=4&ctx=web6dot0&q=${q}&n=${limit}`,
+    5500
   );
-  if (!data || !data.data || !Array.isArray(data.data.results)) return [];
+  if (!data || !Array.isArray(data.results)) return [];
   const tracks = [];
-  for (const item of data.data.results) {
-    const durSec = Number(item.duration || 0);
-    // Reject <45s snippets; require full-length tracks
+  for (const item of data.results) {
+    const durSec = Number(item.more_info?.duration || item.duration || 0);
+    // Strictly reject <45s snippets; require full-length tracks
     if (durSec > 0 && durSec < 45) continue;
-    const streamUrl = pickBestSaavnStream(item.downloadUrl);
-    if (!streamUrl) continue;
-    const art = item.image?.[item.image.length - 1]?.url || item.image?.[0]?.url || '';
-    const artist = item.artists?.primary?.map(a => a.name).filter(Boolean).join(', ')
-      || item.artists?.all?.[0]?.name
-      || 'Unknown Artist';
+    const enc = item.more_info?.encrypted_media_url || '';
+    const decrypted = decryptSaavnUrl(enc);
+    if (!decrypted || !/saavncdn\.com/i.test(decrypted)) continue;
+    const baseHttps = ensureHttpsUrl(decrypted)
+      .replace('h.saavncdn.com', 'aac.saavncdn.com')
+      .replace('web.saavncdn.com', 'aac.saavncdn.com');
+    const streamUrl = baseHttps.replace(/_\d+\.mp4$/i, '_160.mp4');
+    const art = ensureHttpsUrl((item.image || '').replace('150x150', '500x500').replace('50x50', '500x500'));
+    const primaryArtists = item.more_info?.artistMap?.primary_artists?.map(a => a.name).filter(Boolean).join(', ');
+    const artist = primaryArtists || item.subtitle?.split(' - ')[0] || 'Unknown Artist';
     tracks.push({
       videoId: `sv_${item.id}`,
-      title: decodeHtmlEntities(item.name || 'Unknown Title'),
+      title: decodeHtmlEntities(item.title || 'Unknown Title'),
       artist: decodeHtmlEntities(artist),
       duration: durSec ? formatTime(durSec) : '',
-      thumbnail: ensureHttpsUrl(art),
+      thumbnail: art,
       source: 'saavn',
       webpageUrl: streamUrl
     });
@@ -302,18 +435,40 @@ async function fetchSaavnDirect(query, limit = 15) {
   return tracks;
 }
 
+async function fetchSaavnDirect(query, limit = 15) {
+  const official = await fetchSaavnOfficial(query, limit);
+  if (official.length) return official;
+  return [];
+}
+window.fetchSaavnDirect = fetchSaavnDirect;
+
+async function resolveProgressiveAudioFallback(track) {
+  if (!track) return '';
+  const query = `${track.artist && track.artist !== 'Unknown' && track.artist !== 'YouTube Music' ? track.artist + ' ' : ''}${track.title || ''}`.trim();
+  if (!query) return '';
+  const svMatches = await fetchSaavnDirect(query, 3);
+  if (svMatches.length && svMatches[0].webpageUrl) {
+    return svMatches[0].webpageUrl;
+  }
+  return '';
+}
+window.resolveProgressiveAudioFallback = resolveProgressiveAudioFallback;
+
 async function fetchSoundCloudSearch(query, limit = 12) {
-  if (!isNativeCapacitor()) return [];
+  const isLocalDev = window.location &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') &&
+    window.location.port === '3457';
+  if (!isNativeCapacitor() && !isLocalDev) return [];
   const q = encodeURIComponent(query);
   let data = await fetchJsonWithTimeout(
     `https://api-v2.soundcloud.com/search/tracks?q=${q}&client_id=${encodeURIComponent(scClientId)}&limit=${limit}`,
-    3500
+    4000
   );
   if (!data || !Array.isArray(data.collection)) {
     await refreshSoundCloudClientId();
     data = await fetchJsonWithTimeout(
       `https://api-v2.soundcloud.com/search/tracks?q=${q}&client_id=${encodeURIComponent(scClientId)}&limit=${limit}`,
-      3500
+      4000
     );
   }
   if (!data || !Array.isArray(data.collection)) return [];
@@ -346,12 +501,15 @@ async function fetchSoundCloudSearch(query, limit = 12) {
 }
 
 async function resolveSoundCloudStreamUrl(track) {
-  if (!track || !track.scTranscodingUrl || !isNativeCapacitor()) return '';
+  const isLocalDev = window.location &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') &&
+    window.location.port === '3457';
+  if (!track || !track.scTranscodingUrl || (!isNativeCapacitor() && !isLocalDev)) return '';
   const sep = track.scTranscodingUrl.includes('?') ? '&' : '?';
   const authPart = track.scTrackAuth ? `&track_authorization=${encodeURIComponent(track.scTrackAuth)}` : '';
   const data = await fetchJsonWithTimeout(
     `${track.scTranscodingUrl}${sep}client_id=${encodeURIComponent(scClientId)}${authPart}`,
-    3500
+    4000
   );
   return data && data.url ? ensureHttpsUrl(data.url) : '';
 }
@@ -480,14 +638,14 @@ async function searchMusicDirectHTTPS(query) {
     fetchPipedSearch(query)
   ]);
 
-  // 1. SoundCloud full tracks on native iOS (best RU + global exact catalog match)
-  if (scRes.status === 'fulfilled' && Array.isArray(scRes.value)) {
-    scRes.value.forEach(addUnique);
-  }
-
-  // 2. Saavn full-length HTTPS .mp4 AAC tracks (works everywhere with Range + ACAO: *)
+  // 1. Saavn full-length HTTPS .mp4 AAC tracks FIRST (works in both Chrome & iOS Safari with Range + ACAO: *)
   if (saavnRes.status === 'fulfilled' && Array.isArray(saavnRes.value)) {
     saavnRes.value.forEach(addUnique);
+  }
+
+  // 2. SoundCloud full tracks (native iOS HLS + localhost fMP4 assembly)
+  if (scRes.status === 'fulfilled' && Array.isArray(scRes.value)) {
+    scRes.value.forEach(addUnique);
   }
 
   // 3. Invidious / Piped full YouTube Music tracks
@@ -585,6 +743,20 @@ function createTrackHTML(track, context, index, options = {}) {
     ? `<span class="track-drag-handle" title="Перетащите для изменения порядка">☰</span>`
     : '';
 
+  const isDownloaded = window.offlineManager?.isDownloaded(track);
+  const isDownloading = window.offlineManager?.isDownloading(track);
+  const dlClass = isDownloading ? 'is-downloading' : (isDownloaded ? 'is-downloaded' : '');
+  const dlTitle = isDownloaded ? 'Скачано (нажмите, чтобы удалить из кэша)' : 'Скачать для оффлайн-режима';
+  const dlIcon = isDownloading
+    ? '<span class="track-download-spinner"></span>'
+    : (isDownloaded
+        ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
+        : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>');
+
+  const offlineBadge = isDownloaded && context !== 'offline'
+    ? '<span class="track-source-badge offline">оффлайн</span>'
+    : '';
+
   return `
     <div class="track-item ${isPlaying ? 'playing' : ''} ${isSelected ? 'selected' : ''}"
          draggable="${showDragHandle ? 'true' : 'false'}"
@@ -608,11 +780,14 @@ function createTrackHTML(track, context, index, options = {}) {
       ${checkboxHTML}
       ${imgEl}
       <div class="track-info">
-        <div class="track-title">${escapeHTML(track.title)}${sourceBadge}</div>
+        <div class="track-title">${escapeHTML(track.title)}${sourceBadge}${offlineBadge}</div>
         <div class="track-artist">${escapeHTML(track.artist || 'Unknown')}</div>
       </div>
       <div class="track-duration">${escapeHTML(track.duration || '')}</div>
       <div class="track-actions">
+        <button class="icon-btn track-download-btn ${dlClass}" title="${dlTitle}" aria-label="${dlTitle}" onclick="event.stopPropagation(); handleTrackDownloadClick(getTrackData(this.closest('.track-item')))">
+          ${dlIcon}
+        </button>
         <button class="icon-btn track-add-playlist-btn" title="Добавить в плейлист" aria-label="Добавить в плейлист" onclick="event.stopPropagation(); openAddToPlaylistSheet(getTrackData(this.closest('.track-item')))">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
         </button>
@@ -656,12 +831,14 @@ function handleTrackClick(el, event) {
   const context = el.dataset.context;
 
   if (context === 'search') {
+    state.isMyWaveActive = false;
     const items = $$('#search-results .track-item');
     state.queue = Array.from(items).map(it => getTrackData(it));
     state.queueIndex = parseInt(el.dataset.index);
   } else if (context === 'queue') {
     state.queueIndex = parseInt(el.dataset.index);
   } else if (context === 'playlist') {
+    state.isMyWaveActive = false;
     state.queue = [...window.playlistManager.filteredTracks].map(t => ({
       id: t.id,
       videoId: t.video_id,
@@ -675,17 +852,62 @@ function handleTrackClick(el, event) {
     }));
     state.queueIndex = parseInt(el.dataset.index);
   } else if (context === 'local') {
+    state.isMyWaveActive = false;
     const items = $$('#local-files-list .track-item');
     state.queue = Array.from(items).map(it => getTrackData(it));
     state.queueIndex = parseInt(el.dataset.index);
+  } else if (context === 'offline') {
+    state.isMyWaveActive = false;
+    const offlineList = window.offlineManager?.getAllTracks() || [];
+    state.queue = offlineList;
+    state.queueIndex = parseInt(el.dataset.index);
   }
 
+  updateMyWaveUI();
   playTrack(track);
+}
+
+async function resolveStreamUrlForTrack(track) {
+  if (!track) return '';
+  const apiBase = getCustomBackendApi();
+  let streamUrl = '';
+
+  if (track.source === 'local' && track.localPath && apiBase) {
+    streamUrl = `${apiBase}/local-file?path=${encodeURIComponent(track.localPath)}`;
+  } else if (track.source === 'soundcloud' && track.scTranscodingUrl) {
+    streamUrl = await resolveSoundCloudStreamUrl(track);
+  } else if (isDirectAudioUrl(track.webpageUrl || track.webpage_url)) {
+    streamUrl = ensureHttpsUrl(track.webpageUrl || track.webpage_url);
+  } else if (apiBase && (track.videoId || track.video_id || track.webpageUrl || track.webpage_url)) {
+    const id = track.videoId || track.video_id || encodeURIComponent(track.webpageUrl || track.webpage_url);
+    streamUrl = `${apiBase}/audio/${id}`;
+  } else if ((track.videoId || track.video_id) && !/^(it_|dz_|sv_|sc_)/.test(track.videoId || track.video_id)) {
+    const vid = track.videoId || track.video_id;
+    streamUrl = await resolveYouTubeStreamViaInvidiousOrPiped(vid, track.instanceBase || '');
+  }
+
+  if (!streamUrl) {
+    const query = `${track.artist && track.artist !== 'Unknown' && track.artist !== 'YouTube Music' ? track.artist + ' ' : ''}${track.title || ''}`.trim();
+    if (query) {
+      const svMatches = await fetchSaavnDirect(query, 3);
+      if (svMatches.length && svMatches[0].webpageUrl) {
+        streamUrl = svMatches[0].webpageUrl;
+      }
+      if (!streamUrl) {
+        const scMatches = await fetchSoundCloudSearch(query, 3);
+        if (scMatches.length) {
+          streamUrl = await resolveSoundCloudStreamUrl(scMatches[0]);
+        }
+      }
+    }
+  }
+  return streamUrl || '';
 }
 
 async function playTrack(track) {
   state.currentTrack = track;
   state.isPlaying = true;
+  window.storageManager?.recordPlayHistory?.(track);
 
   // Ensure Web Audio Engine is initialized
   window.audioEngine.init(audio);
@@ -721,19 +943,36 @@ async function playTrack(track) {
     extractColors(track.thumbnail);
   }
 
-  window.flyqaIOS?.updateMediaSession(track);
+  window.flyqaIOS?.updateMediaSession(track, true);
   syncFullscreenUI();
   updateFsMarquee();
 
   updatePlayIcon();
   highlightCurrentTrack();
 
-  // Audio Source setup: full-length HTTPS stream (Saavn / SoundCloud / Invidious / Piped / custom server)
+  // Audio Source setup: 1) Local Offline Cache (IndexedDB) -> 2) Full-length HTTPS stream
   const playTrackToken = ++state._playToken || (state._playToken = 1);
   const startAudioStream = async (url, allowCorsAttr = true) => {
-    const isHlsStream = /\.m3u8(\?|$)|mpegurl/i.test(url);
+    let resolvedPlayUrl = url;
+    const isBlobUrlInit = typeof resolvedPlayUrl === 'string' && resolvedPlayUrl.startsWith('blob:');
+    const isHlsInit = !isBlobUrlInit && /\.m3u8(\?|$)|mpegurl/i.test(resolvedPlayUrl);
+
+    // If browser (e.g. Chrome desktop) cannot play HLS natively, assemble fMP4 HLS segments into a full playable MP4 Blob
+    if (isHlsInit && primaryAudio && !primaryAudio.canPlayType('application/vnd.apple.mpegurl')) {
+      if (window.offlineManager && typeof window.offlineManager._downloadHlsFmp4AsBlob === 'function') {
+        const blob = await window.offlineManager._downloadHlsFmp4AsBlob(resolvedPlayUrl, track);
+        if (blob) {
+          resolvedPlayUrl = URL.createObjectURL(blob);
+        } else {
+          throw new Error('HLS assembly failed');
+        }
+      }
+    }
+
+    const isBlobUrl = typeof resolvedPlayUrl === 'string' && resolvedPlayUrl.startsWith('blob:');
+    const isHlsStream = !isBlobUrl && /\.m3u8(\?|$)|mpegurl/i.test(resolvedPlayUrl);
     // Use direct element for native iOS HLS (.m3u8) or non-CORS fallback streams so createMediaElementSource never mutes audio
-    const useDirectEl = (isHlsStream || !allowCorsAttr) && hlsAudio;
+    const useDirectEl = !isBlobUrl && (isHlsStream || !allowCorsAttr) && hlsAudio;
     const targetEl = useDirectEl ? hlsAudio : primaryAudio;
     const otherEl = targetEl === primaryAudio ? hlsAudio : primaryAudio;
 
@@ -776,7 +1015,7 @@ async function playTrack(track) {
       const onReady = () => {
         targetEl.play().then(finishOk).catch(finishErr);
       };
-      const timer = setTimeout(() => finishErr(new Error('Audio stream timeout')), 8000);
+      const timer = setTimeout(() => finishErr(new Error('Audio stream timeout')), 12000);
 
       targetEl.addEventListener('error', onErr);
       targetEl.addEventListener('canplay', onReady);
@@ -786,7 +1025,7 @@ async function playTrack(track) {
       } else {
         targetEl.removeAttribute('crossorigin');
       }
-      targetEl.src = url;
+      targetEl.src = resolvedPlayUrl;
       targetEl.volume = state.volume;
       targetEl.load();
       targetEl.play().then(finishOk).catch((playErr) => {
@@ -800,23 +1039,35 @@ async function playTrack(track) {
   const resolveFullFallbackUrl = async (excludeSaavn = false) => {
     const query = `${track.artist && track.artist !== 'Unknown' && track.artist !== 'YouTube Music' ? track.artist + ' ' : ''}${track.title || ''}`.trim();
     if (!query) return '';
-    if (isNativeCapacitor()) {
-      const scMatches = await fetchSoundCloudSearch(query, 3);
-      if (scMatches.length) {
-        const scUrl = await resolveSoundCloudStreamUrl(scMatches[0]);
-        if (scUrl) return scUrl;
-      }
-    }
     if (!excludeSaavn) {
       const svMatches = await fetchSaavnDirect(query, 3);
       if (svMatches.length && svMatches[0].webpageUrl) {
         return svMatches[0].webpageUrl;
       }
     }
+    const scMatches = await fetchSoundCloudSearch(query, 3);
+    if (scMatches.length) {
+      const scUrl = await resolveSoundCloudStreamUrl(scMatches[0]);
+      if (scUrl) return scUrl;
+    }
     return '';
   };
 
   try {
+    // 1. Check Offline Cache first (works even with no internet connection)
+    const offlineBlobUrl = await window.offlineManager?.getOfflineAudioUrl(track);
+    if (state._playToken !== playTrackToken) return;
+
+    if (offlineBlobUrl) {
+      await startAudioStream(offlineBlobUrl, true);
+      if (state._playToken !== playTrackToken) return;
+      $('.player-cover-wrap')?.classList.add('playing');
+      if (window.storageManager.getSetting('visualizerEnabled')) {
+        window.audioVisualizer?.start();
+      }
+      return;
+    }
+
     const apiBase = getCustomBackendApi();
     let streamUrl = '';
 
@@ -861,15 +1112,23 @@ async function playTrack(track) {
     }
 
     if (state._playToken !== playTrackToken) return;
+    state._waveFailStreak = 0;
     $('.player-cover-wrap')?.classList.add('playing');
     if (window.storageManager.getSetting('visualizerEnabled')) {
       window.audioVisualizer?.start();
     }
+    updateMyWaveUI();
   } catch (err) {
     if (state._playToken !== playTrackToken) return;
     console.warn('Play error:', err);
+    if (state.isMyWaveActive && state.queue.length > 1 && (state._waveFailStreak || 0) < 3) {
+      state._waveFailStreak = (state._waveFailStreak || 0) + 1;
+      playNext();
+      return;
+    }
     state.isPlaying = false;
     updatePlayIcon();
+    updateMyWaveUI();
     showToast('Ошибка воспроизведения: проверьте интернет');
   }
 }
@@ -920,6 +1179,8 @@ function togglePlay() {
     $('.player-cover-wrap')?.classList.remove('playing');
   }
   updatePlayIcon();
+  window.flyqaIOS?.updateMediaSession?.(state.currentTrack, state.isPlaying);
+  updateMyWaveUI();
 }
 
 function updatePlayIcon() {
@@ -950,12 +1211,18 @@ function playNext() {
   state.queueIndex = (state.queueIndex + 1) % state.queue.length;
   playTrack(state.queue[state.queueIndex]);
   if (state.currentView === 'queue') updateQueueView();
+
+  // Infinite My Wave queue refill when approaching end of queue
+  if (state.isMyWaveActive && (state.queue.length - 1 - state.queueIndex) <= 2) {
+    refillMyWaveQueue();
+  }
 }
 
 function playPrev() {
   if (state.queue.length === 0) return;
   if (audio.currentTime > 3) {
     audio.currentTime = 0;
+    window.flyqaIOS?.updateMediaPositionState?.();
     return;
   }
   state.queueIndex = (state.queueIndex - 1 + state.queue.length) % state.queue.length;
@@ -963,12 +1230,17 @@ function playPrev() {
   if (state.currentView === 'queue') updateQueueView();
 }
 
+window.playNextTrack = playNext;
+window.playPrevTrack = playPrev;
+
 // Progress Bar & Audio Events (attached to both primary & HLS audio elements)
 [primaryAudio, hlsAudio].filter(Boolean).forEach((el) => {
   el.addEventListener('play', () => {
     if (el !== audio) return;
     state.isPlaying = true;
     updatePlayIcon();
+    updateMyWaveUI();
+    window.flyqaIOS?.updateMediaSession?.(state.currentTrack, true);
     $('.player-cover-wrap')?.classList.add('playing');
   });
 
@@ -976,6 +1248,8 @@ function playPrev() {
     if (el !== audio) return;
     state.isPlaying = false;
     updatePlayIcon();
+    updateMyWaveUI();
+    window.flyqaIOS?.updateMediaSession?.(state.currentTrack, false);
     $('.player-cover-wrap')?.classList.remove('playing');
   });
 
@@ -1198,6 +1472,31 @@ function syncFullscreenUI() {
   updatePlayIcon();
   updateShuffleButtonUI();
   updateRepeatButtonUI();
+  syncFullscreenDownloadBtn();
+}
+
+function syncFullscreenDownloadBtn() {
+  const btn = $('#fs-btn-download');
+  const label = $('#fs-download-label');
+  const icon = $('#fs-download-icon');
+  if (!btn || !label || !icon) return;
+
+  const track = state.currentTrack;
+  const isDl = track && window.offlineManager?.isDownloaded(track);
+  const isDling = track && window.offlineManager?.isDownloading(track);
+
+  btn.classList.toggle('is-downloaded', Boolean(isDl));
+  btn.classList.toggle('is-downloading', Boolean(isDling));
+
+  if (isDling) {
+    label.textContent = 'Загрузка...';
+  } else if (isDl) {
+    label.textContent = 'Скачано';
+    icon.innerHTML = '<polyline points="20 6 9 17 4 12"/>';
+  } else {
+    label.textContent = 'Скачать';
+    icon.innerHTML = '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>';
+  }
 }
 
 function updateFsMarquee() {
@@ -1444,6 +1743,14 @@ function initFullscreenPlayerUI() {
       return;
     }
     openAddToPlaylistSheet(state.currentTrack);
+  });
+
+  $('#fs-btn-download')?.addEventListener('click', () => {
+    if (!state.currentTrack) {
+      showToast('Сначала выберите трек');
+      return;
+    }
+    handleTrackDownloadClick(state.currentTrack);
   });
 
   // Extended Fullscreen Seek Bar (mouse + iOS touch seek support)
@@ -1785,7 +2092,7 @@ function initSettingsUI() {
   // Transition style
   const transSelect = $('#setting-transition-style');
   if (transSelect) {
-    transSelect.value = window.storageManager.getSetting('transitionStyle') || 'slide';
+    transSelect.value = window.storageManager.getSetting('transitionStyle') || 'ios-slide';
     transSelect.onchange = () => window.themeManager.applyTransitionStyle(transSelect.value);
   }
 
@@ -2989,7 +3296,298 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ============================================================
-//  16. Supabase Auth UI & Initialization
+//  15.5 Offline Mode (IndexedDB Cache) & My Wave (Smart Stream)
+// ============================================================
+async function handleTrackDownloadClick(track) {
+  if (!track || !window.offlineManager) return;
+
+  if (window.offlineManager.isDownloaded(track)) {
+    await window.offlineManager.removeTrack(track);
+    showToast(`Удалено из оффлайн-кэша: ${track.title}`);
+    refreshOfflineUI();
+    return;
+  }
+
+  if (window.offlineManager.isDownloading(track)) return;
+
+  showToast(`Скачивание: ${track.title}...`);
+  refreshOfflineUI();
+  try {
+    await window.offlineManager.downloadTrack(track, resolveStreamUrlForTrack);
+    showToast(`Скачано для оффлайна: ${track.title}`);
+  } catch (err) {
+    console.warn('Download failed:', err);
+    showToast('Не удалось скачать трек');
+  }
+  refreshOfflineUI();
+}
+
+window.handleTrackDownloadClick = handleTrackDownloadClick;
+
+function refreshOfflineUI() {
+  syncFullscreenDownloadBtn();
+  renderOfflineTracksView();
+
+  // Refresh download badges on currently rendered track rows without rebuilding entire view
+  $$('.track-item').forEach((el) => {
+    const t = getTrackData(el);
+    const btn = el.querySelector('.track-download-btn');
+    const titleEl = el.querySelector('.track-title');
+    if (!btn || !window.offlineManager) return;
+    const isDl = window.offlineManager.isDownloaded(t);
+    const isDling = window.offlineManager.isDownloading(t);
+    btn.classList.toggle('is-downloaded', isDl);
+    btn.classList.toggle('is-downloading', isDling);
+    if (isDling) {
+      btn.innerHTML = '<span class="track-download-spinner"></span>';
+    } else if (isDl) {
+      btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+    } else {
+      btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+    }
+    if (titleEl && el.dataset.context !== 'offline') {
+      const existingBadge = titleEl.querySelector('.track-source-badge.offline');
+      if (isDl && !existingBadge) {
+        const badge = document.createElement('span');
+        badge.className = 'track-source-badge offline';
+        badge.textContent = 'оффлайн';
+        titleEl.appendChild(badge);
+      } else if (!isDl && existingBadge) {
+        existingBadge.remove();
+      }
+    }
+  });
+}
+
+function renderOfflineTracksView() {
+  if (!window.offlineManager) return;
+  const tracks = window.offlineManager.getAllTracks();
+  const sizeMB = window.offlineManager.getTotalSizeMB();
+  const statsEl = $('#offline-stats-subtitle');
+  if (statsEl) {
+    statsEl.textContent = `${tracks.length} треков · ${sizeMB} МБ`;
+  }
+
+  const html = tracks.length
+    ? tracks.map((t, i) => createTrackHTML(t, 'offline', i)).join('')
+    : '<div class="empty-state"><p>Пока нет скачанных треков. Нажмите иконку загрузки у любого трека, чтобы слушать без интернета.</p></div>';
+
+  const desktopList = $('#offline-tracks-list');
+  const mobileList = $('#mobile-offline-tracks-list');
+  if (desktopList) desktopList.innerHTML = html;
+  if (mobileList) mobileList.innerHTML = html;
+}
+
+function initLibraryFilterTabs() {
+  const plTab = $('#tab-lib-playlists');
+  const offTab = $('#tab-lib-offline');
+  const plList = $('#mobile-playlists-list');
+  const offList = $('#mobile-offline-tracks-list');
+  const titleEl = $('#mobile-library-title');
+  const subEl = $('#mobile-playlists-subtitle');
+  const newPlBtn = $('#btn-mobile-new-playlist');
+
+  const setTab = (tab) => {
+    const isOffline = tab === 'offline';
+    plTab?.classList.toggle('active', !isOffline);
+    offTab?.classList.toggle('active', isOffline);
+    if (plList) plList.style.display = isOffline ? 'none' : '';
+    if (offList) offList.style.display = isOffline ? '' : 'none';
+    if (newPlBtn) newPlBtn.style.display = isOffline ? 'none' : '';
+    if (titleEl) titleEl.textContent = isOffline ? 'Скачанные треки' : 'Плейлисты';
+    if (subEl) {
+      if (isOffline && window.offlineManager) {
+        const count = window.offlineManager.getAllTracks().length;
+        subEl.textContent = `${count} оффлайн треков · ${window.offlineManager.getTotalSizeMB()} МБ`;
+      } else {
+        subEl.textContent = state.playlists.length ? `${state.playlists.length} плейлистов` : 'Ваша коллекция музыки';
+      }
+    }
+    if (isOffline) renderOfflineTracksView();
+  };
+
+  plTab?.addEventListener('click', () => setTab('playlists'));
+  offTab?.addEventListener('click', () => setTab('offline'));
+}
+
+// --- «Моя волна» (Smart Recommendation Stream) ---
+function buildMyWaveSeeds() {
+  const artistScores = new Map();
+  const addWeight = (artist, weight) => {
+    if (!artist || typeof artist !== 'string') return;
+    const clean = artist.split(/,|feat\.|ft\.|&/i)[0].trim();
+    if (!clean || /^(unknown|youtube music|локальный файл)$/i.test(clean)) return;
+    artistScores.set(clean, (artistScores.get(clean) || 0) + weight);
+  };
+
+  // 1. Listening history
+  const history = window.storageManager?.loadPlayHistory?.() || [];
+  history.forEach((t, idx) => addWeight(t.artist, Math.max(1, 5 - Math.floor(idx / 5))));
+
+  // 2. Guest cached playlists & current loaded playlist
+  const cachedPlaylists = getGuestPlaylistsCache();
+  cachedPlaylists.forEach((pl) => {
+    (pl.tracks || []).forEach((t) => addWeight(t.artist, 3));
+  });
+  (window.playlistManager?.currentTracks || []).forEach((t) => addWeight(t.artist, 3));
+
+  // 3. Offline downloaded tracks
+  (window.offlineManager?.getAllTracks() || []).forEach((t) => addWeight(t.artist, 4));
+
+  // 4. Current queue
+  (state.queue || []).forEach((t) => addWeight(t.artist, 2));
+
+  const rankedArtists = Array.from(artistScores.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([name]) => name)
+    .slice(0, 5);
+
+  if (rankedArtists.length > 0) {
+    const seeds = [...rankedArtists];
+    seeds.push(`${rankedArtists[0]} mix`);
+    return { seeds, basedOn: rankedArtists.slice(0, 3) };
+  }
+
+  return {
+    seeds: ['lofi chill beats', 'indie pop hits', 'ambient electronic', 'acoustic chill'],
+    basedOn: []
+  };
+}
+
+async function fetchMyWaveBatch(seeds, excludeList = []) {
+  const excludeKeys = new Set(
+    excludeList.map((t) => `${(t.videoId || t.video_id || '')}|${(t.title || '').toLowerCase()}`)
+  );
+
+  const chosenSeeds = [...seeds].sort(() => Math.random() - 0.5).slice(0, 3);
+  const pool = [];
+  const seen = new Set();
+
+  const responses = await Promise.allSettled(
+    chosenSeeds.map((q) => searchMusicDirectHTTPS(q))
+  );
+
+  responses.forEach((res) => {
+    if (res.status === 'fulfilled' && Array.isArray(res.value)) {
+      res.value.forEach((track) => {
+        const key = `${(track.videoId || '')}|${(track.title || '').toLowerCase()}`;
+        if (!track.title || seen.has(key) || excludeKeys.has(key)) return;
+        seen.add(key);
+        pool.push(track);
+      });
+    }
+  });
+
+  if (window.smartShuffle) {
+    window.smartShuffle.setMode('fair');
+    return window.smartShuffle.shuffle(pool, -1).slice(0, 14);
+  }
+  return pool.slice(0, 14);
+}
+
+function updateMyWaveUI(isLoading = false) {
+  const card = $('#my-wave-card');
+  const label = $('#my-wave-btn-label');
+  const icon = $('#my-wave-play-icon');
+  const subtitle = $('#my-wave-subtitle');
+  if (!card) return;
+
+  const activePlaying = Boolean(state.isMyWaveActive && state.isPlaying);
+  card.classList.toggle('is-playing', activePlaying);
+
+  if (label) {
+    if (isLoading) label.textContent = 'Подбор...';
+    else if (activePlaying) label.textContent = 'Пауза';
+    else if (state.isMyWaveActive) label.textContent = 'Продолжить';
+    else label.textContent = 'Слушать';
+  }
+
+  if (icon) {
+    icon.innerHTML = activePlaying
+      ? '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>'
+      : '<path d="M8 5v14l11-7z"/>';
+  }
+
+  if (subtitle) {
+    const { basedOn } = buildMyWaveSeeds();
+    if (state.isMyWaveActive && state.currentTrack) {
+      subtitle.textContent = basedOn.length
+        ? `Играет поток · На основе: ${basedOn.join(', ')}`
+        : 'Бесконечный поток рекомендаций активен';
+    } else if (basedOn.length) {
+      subtitle.textContent = `Персональный поток по вкусам: ${basedOn.join(', ')}`;
+    } else {
+      subtitle.textContent = 'Бесконечный поток треков под ваше настроение и историю';
+    }
+  }
+}
+
+async function startMyWave(forceRefresh = false) {
+  window.flyqaIOS?.primeAudioForGesture?.();
+
+  if (state.isMyWaveActive && !forceRefresh && state.currentTrack && state.queue.length > 0) {
+    togglePlay();
+    return;
+  }
+
+  if (state._waveLoading) return;
+  state._waveLoading = true;
+  updateMyWaveUI(true);
+
+  try {
+    const { seeds } = buildMyWaveSeeds();
+    let tracks = await fetchMyWaveBatch(seeds, forceRefresh ? state.queue : []);
+
+    // Offline fallback: if offline or no network tracks, stream from downloaded cache
+    if (!tracks.length && window.offlineManager) {
+      tracks = window.offlineManager.getAllTracks();
+    }
+
+    if (!tracks.length) {
+      showToast('Не удалось подобрать треки для Моей волны');
+      state.isMyWaveActive = false;
+      updateMyWaveUI(false);
+      return;
+    }
+
+    state.isMyWaveActive = true;
+    state.queue = tracks;
+    state.queueIndex = 0;
+    updateMyWaveUI(false);
+    await playTrack(state.queue[0]);
+    if (state.currentView === 'queue') updateQueueView();
+    showToast('Моя волна запущена');
+  } finally {
+    state._waveLoading = false;
+    updateMyWaveUI(false);
+  }
+}
+
+async function refillMyWaveQueue() {
+  if (!state.isMyWaveActive || state._waveRefilling) return;
+  state._waveRefilling = true;
+  try {
+    const { seeds } = buildMyWaveSeeds();
+    const more = await fetchMyWaveBatch(seeds, state.queue);
+    if (more.length) {
+      state.queue.push(...more);
+      if (state.currentView === 'queue') updateQueueView();
+    }
+  } catch (e) {
+    // Ignore background refill errors
+  } finally {
+    state._waveRefilling = false;
+  }
+}
+
+function initMyWaveUI() {
+  $('#btn-my-wave-play')?.addEventListener('click', () => startMyWave(false));
+  $('#btn-my-wave-refresh')?.addEventListener('click', () => startMyWave(true));
+  updateMyWaveUI(false);
+}
+
+// ============================================================
+//  16. Supabase Auth UI, Profile Sheet & Initialization
 // ============================================================
 function formatAuthError(err) {
   const msg = (err && err.message ? err.message : String(err || '')).toLowerCase();
@@ -3034,6 +3632,61 @@ function updateAuthProfileUI(user, profile) {
     if (iosAuthLabel) iosAuthLabel.textContent = 'Войти';
   }
 }
+
+function openProfileModal() {
+  if (!window.supabaseService?.isAuthenticated?.()) {
+    $('#btn-open-auth')?.click();
+    return;
+  }
+
+  const overlay = $('#profile-modal-overlay');
+  if (!overlay) return;
+
+  const user = window.supabaseService.getUser();
+  const profile = window.supabaseService.getProfile();
+  const displayName =
+    profile?.username ||
+    user?.user_metadata?.username ||
+    (user?.email ? user.email.split('@')[0] : 'flyqa');
+
+  const nameEl = $('#profile-modal-name');
+  const emailEl = $('#profile-modal-email');
+  const avatarEl = $('#profile-modal-avatar');
+  const plStat = $('#profile-stat-playlists');
+  const offStat = $('#profile-stat-offline');
+
+  if (nameEl) nameEl.textContent = displayName;
+  if (emailEl) emailEl.textContent = user?.email || '';
+  if (avatarEl) {
+    if (profile?.avatar_url) {
+      avatarEl.innerHTML = `<img src="${escapeAttr(profile.avatar_url)}" alt="">`;
+    } else {
+      avatarEl.textContent = displayName.charAt(0).toUpperCase();
+    }
+  }
+  if (plStat) plStat.textContent = String(state.playlists.length);
+  if (offStat) offStat.textContent = String(window.offlineManager?.getAllTracks().length || 0);
+
+  overlay.classList.remove('is-closing');
+  overlay.style.display = 'flex';
+  overlay.setAttribute('aria-hidden', 'false');
+  requestAnimationFrame(() => overlay.classList.add('is-open'));
+}
+
+function closeProfileModal() {
+  const overlay = $('#profile-modal-overlay');
+  if (!overlay || overlay.style.display === 'none') return;
+  overlay.classList.remove('is-open');
+  overlay.classList.add('is-closing');
+  overlay.setAttribute('aria-hidden', 'true');
+  setTimeout(() => {
+    overlay.style.display = 'none';
+    overlay.classList.remove('is-closing');
+  }, 340);
+}
+
+window.openProfileModal = openProfileModal;
+window.closeProfileModal = closeProfileModal;
 
 function initAuthUI() {
   const overlay = $('#auth-modal-overlay');
@@ -3087,6 +3740,14 @@ function initAuthUI() {
   };
 
   $('#btn-open-auth')?.addEventListener('click', () => openAuthModal('login'));
+  $('#profile-user-card')?.addEventListener('click', (e) => {
+    if (e.target.closest('#btn-logout')) return;
+    openProfileModal();
+  });
+  $('#btn-close-profile')?.addEventListener('click', closeProfileModal);
+  $('#profile-modal-overlay')?.addEventListener('click', (e) => {
+    if (e.target.id === 'profile-modal-overlay') closeProfileModal();
+  });
   $('#btn-close-auth')?.addEventListener('click', closeAuthModal);
   $('#btn-continue-guest')?.addEventListener('click', closeAuthModal);
   overlay?.addEventListener('click', (e) => {
@@ -3096,9 +3757,10 @@ function initAuthUI() {
   tabLogin?.addEventListener('click', () => setAuthMode('login'));
   tabRegister?.addEventListener('click', () => setAuthMode('register'));
 
-  $('#btn-logout')?.addEventListener('click', async () => {
+  const performLogout = async () => {
     try {
       await window.supabaseService?.signOut();
+      closeProfileModal();
       state.currentPlaylistId = null;
       if (state.currentView === 'playlist') switchView('search');
       updateAuthProfileUI(null, null);
@@ -3107,7 +3769,10 @@ function initAuthUI() {
     } catch (err) {
       showToast('Ошибка выхода: ' + (err.message || err));
     }
-  });
+  };
+
+  $('#btn-logout')?.addEventListener('click', performLogout);
+  $('#btn-profile-logout')?.addEventListener('click', performLogout);
 
   form?.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -3191,10 +3856,16 @@ function initSplashScreen() {
 
 window.addEventListener('DOMContentLoaded', async () => {
   window.themeManager.init();
+  if (window.offlineManager) {
+    await window.offlineManager.init();
+    window.offlineManager.onChange(() => refreshOfflineUI());
+  }
   initVisualizerUI();
   initSettingsUI();
   initFullscreenPlayerUI();
   initAddToPlaylistSheetUI();
+  initLibraryFilterTabs();
+  initMyWaveUI();
   initAuthUI();
   updateShuffleButtonUI();
   updateRepeatButtonUI();

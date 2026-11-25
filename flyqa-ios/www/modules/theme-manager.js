@@ -97,6 +97,7 @@ class ThemeManager {
     this.applyAnimSpeed(s.animSpeed || '1x');
     this.applyReduceMotion(s.reduceMotion || false);
     this.applyPlayerStyle(s.playerStyle || 'cover');
+    this.applyTransitionStyle(s.transitionStyle || 'ios-slide');
 
     if (!s.dynamicPalette && s.accentColor) {
       this.setCustomAccent(s.accentColor);
@@ -268,8 +269,11 @@ class ThemeManager {
   }
 
   applyTransitionStyle(style) {
-    document.body.setAttribute('data-transition', style);
-    window.storageManager.saveSettings({ transitionStyle: style });
+    const valid = ['ios-slide', 'liquid-fade', 'spring-bounce', 'minimal-instant'];
+    const legacy = { slide: 'ios-slide', fade: 'liquid-fade', zoom: 'spring-bounce' };
+    const normalized = valid.includes(style) ? style : (legacy[style] || 'ios-slide');
+    document.body.setAttribute('data-transition', normalized);
+    window.storageManager.saveSettings({ transitionStyle: normalized });
   }
 
   onTrackColorsExtracted(colors) {

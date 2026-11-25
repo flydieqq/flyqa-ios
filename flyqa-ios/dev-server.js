@@ -2,6 +2,7 @@
 //  flyqa-ios — Isolated Static & Config Dev Server (Port 3457)
 // ============================================================
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
@@ -43,6 +44,94 @@ const server = http.createServer((req, res) => {
   if (urlPath === '/api/playlists') {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end('[]');
+    return;
+  }
+
+  if (urlPath === '/api/proxy-json') {
+    const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
+    const target = u.searchParams.get('url');
+    if (!target || !/^https?:\/\//i.test(target)) {
+      res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end('{"error":"invalid url"}');
+      return;
+    }
+    const fetchJsonWithRedirects = (urlStr, depth = 0) => {
+      if (depth > 5) {
+        res.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end('{"error":"redirects"}');
+        return;
+      }
+      const mod = urlStr.startsWith('https://') ? https : http;
+      const proxyReq = mod.get(urlStr, { headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' }, timeout: 7000 }, (upstream) => {
+        if (upstream.statusCode >= 300 && upstream.statusCode < 400 && upstream.headers.location) {
+          const nextUrl = new URL(upstream.headers.location, urlStr).toString();
+          upstream.resume();
+          fetchJsonWithRedirects(nextUrl, depth + 1);
+          return;
+        }
+        res.writeHead(upstream.statusCode || 200, {
+          'Content-Type': upstream.headers['content-type'] || 'application/json; charset=utf-8',
+          'Access-Control-Allow-Origin': '*'
+        });
+        upstream.pipe(res);
+      });
+      proxyReq.on('timeout', () => {
+        proxyReq.destroy();
+        if (!res.headersSent) {
+          res.writeHead(504, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end('{"error":"timeout"}');
+        }
+      });
+      proxyReq.on('error', () => {
+        if (!res.headersSent) {
+          res.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end('{"error":"proxy"}');
+        }
+      });
+    };
+    fetchJsonWithRedirects(target);
+    return;
+  }
+
+  if (urlPath === '/api/proxy-audio') {
+    const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
+    const target = u.searchParams.get('url');
+    if (!target || !/^https?:\/\//i.test(target)) {
+      res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('Invalid url');
+      return;
+    }
+    const fetchWithRedirects = (urlStr, depth = 0) => {
+      if (depth > 5) {
+        res.writeHead(502);
+        res.end('Too many redirects');
+        return;
+      }
+      const mod = urlStr.startsWith('https://') ? https : http;
+      mod.get(urlStr, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (upstream) => {
+        if (upstream.statusCode >= 300 && upstream.statusCode < 400 && upstream.headers.location) {
+          const nextUrl = new URL(upstream.headers.location, urlStr).toString();
+          upstream.resume();
+          fetchWithRedirects(nextUrl, depth + 1);
+          return;
+        }
+        const headers = {
+          'Content-Type': upstream.headers['content-type'] || 'audio/mp4',
+          'Access-Control-Allow-Origin': '*'
+        };
+        if (upstream.headers['content-length']) {
+          headers['Content-Length'] = upstream.headers['content-length'];
+        }
+        res.writeHead(upstream.statusCode || 200, headers);
+        upstream.pipe(res);
+      }).on('error', () => {
+        if (!res.headersSent) {
+          res.writeHead(502);
+          res.end('Proxy error');
+        }
+      });
+    };
+    fetchWithRedirects(target);
     return;
   }
 

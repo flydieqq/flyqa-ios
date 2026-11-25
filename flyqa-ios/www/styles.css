@@ -320,52 +320,107 @@ body {
 
 .view.active {
   display: block;
-  animation: fadeSlideIn 0.4s var(--ios-spring);
 }
 
-.view.active.slide-from-right {
-  animation: viewSlideRight 0.42s var(--ios-spring);
+.view.is-leaving {
+  display: block;
+  position: absolute;
+  inset: 0;
+  padding: inherit;
+  pointer-events: none;
+  z-index: 1;
 }
 
-.view.active.slide-from-left {
-  animation: viewSlideLeft 0.42s var(--ios-spring);
+.view.active.is-entering {
+  position: relative;
+  z-index: 2;
 }
 
-.view.active.slide-from-bottom {
-  animation: fadeSlideIn 0.42s var(--ios-spring);
+/* 1. iOS Native Slide (Horizontal Swipe + Previous Screen Parallax) */
+body[data-transition="ios-slide"] .view.active.is-entering.slide-from-right {
+  animation: iosNativeInRight calc(0.4s * var(--anim-duration-factor)) var(--ios-spring) both;
+}
+body[data-transition="ios-slide"] .view.active.is-entering.slide-from-left {
+  animation: iosNativeInLeft calc(0.4s * var(--anim-duration-factor)) var(--ios-spring) both;
+}
+body[data-transition="ios-slide"] .view.active.is-entering.slide-from-bottom {
+  animation: iosNativeInBottom calc(0.4s * var(--anim-duration-factor)) var(--ios-spring) both;
+}
+body[data-transition="ios-slide"] .view.is-leaving.slide-to-left {
+  animation: iosParallaxOutLeft calc(0.4s * var(--anim-duration-factor)) var(--ios-spring) both;
+}
+body[data-transition="ios-slide"] .view.is-leaving.slide-to-right {
+  animation: iosParallaxOutRight calc(0.4s * var(--anim-duration-factor)) var(--ios-spring) both;
 }
 
-@keyframes fadeSlideIn {
+@keyframes iosNativeInRight {
+  from { opacity: 0.4; transform: translate3d(38px, 0, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+@keyframes iosNativeInLeft {
+  from { opacity: 0.4; transform: translate3d(-38px, 0, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+@keyframes iosNativeInBottom {
+  from { opacity: 0; transform: translate3d(0, 18px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+@keyframes iosParallaxOutLeft {
+  0% { opacity: 0.7; transform: translate3d(0, 0, 0); }
+  55% { opacity: 0; }
+  100% { opacity: 0; transform: translate3d(-24%, 0, 0); }
+}
+@keyframes iosParallaxOutRight {
+  0% { opacity: 0.7; transform: translate3d(0, 0, 0); }
+  55% { opacity: 0; }
+  100% { opacity: 0; transform: translate3d(24%, 0, 0); }
+}
+
+/* 2. Liquid Fade & Scale (Scale 0.96 -> 1.0 + Soft Blur) */
+body[data-transition="liquid-fade"] .view.active.is-entering {
+  animation: liquidFadeScaleIn calc(0.44s * var(--anim-duration-factor)) var(--ios-ease) both;
+}
+@keyframes liquidFadeScaleIn {
   from {
     opacity: 0;
-    transform: translate3d(0, 14px, 0) scale(0.99);
+    transform: scale(0.96);
+    filter: blur(8px);
   }
   to {
     opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
+    transform: scale(1);
+    filter: blur(0px);
   }
 }
 
-@keyframes viewSlideRight {
-  from {
-    opacity: 0;
-    transform: translate3d(26px, 0, 0);
-  }
-  to {
-    opacity: 1;
-    transform: translate3d(0, 0, 0);
-  }
+/* 3. Spring Bounce (cubic-bezier(0.34, 1.56, 0.64, 1)) */
+body[data-transition="spring-bounce"] .view.active.is-entering.slide-from-right {
+  animation: springBounceRight calc(0.48s * var(--anim-duration-factor)) cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+body[data-transition="spring-bounce"] .view.active.is-entering.slide-from-left {
+  animation: springBounceLeft calc(0.48s * var(--anim-duration-factor)) cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+body[data-transition="spring-bounce"] .view.active.is-entering.slide-from-bottom {
+  animation: springBounceUp calc(0.48s * var(--anim-duration-factor)) cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+@keyframes springBounceRight {
+  from { opacity: 0; transform: translate3d(34px, 0, 0) scale(0.97); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+@keyframes springBounceLeft {
+  from { opacity: 0; transform: translate3d(-34px, 0, 0) scale(0.97); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+@keyframes springBounceUp {
+  from { opacity: 0; transform: translate3d(0, 24px, 0) scale(0.96); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
 }
 
-@keyframes viewSlideLeft {
-  from {
-    opacity: 0;
-    transform: translate3d(-26px, 0, 0);
-  }
-  to {
-    opacity: 1;
-    transform: translate3d(0, 0, 0);
-  }
+/* 4. Minimal Instant (Zero animation) */
+body[data-transition="minimal-instant"] .view.active.is-entering,
+body[data-transition="minimal-instant"] .view.is-leaving {
+  animation: none !important;
+  transition: none !important;
 }
 
 .view-title {
@@ -1310,22 +1365,7 @@ body.reduce-motion * {
   transition-duration: 0.01s !important;
 }
 
-/* --- Transition Styles --- */
-body[data-transition="fade"] .view {
-  animation: fadeTransition calc(0.25s * var(--anim-duration-factor)) ease-out !important;
-}
-@keyframes fadeTransition {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-body[data-transition="zoom"] .view {
-  animation: zoomTransition calc(0.3s * var(--anim-duration-factor)) var(--transition-spring) !important;
-}
-@keyframes zoomTransition {
-  from { opacity: 0; transform: scale(0.95); }
-  to { opacity: 1; transform: scale(1); }
-}
+/* Legacy transition selectors replaced by unified .view.is-entering animations above */
 
 /* --- Search Header Row & Source Pills --- */
 .search-header-row {
@@ -2801,6 +2841,376 @@ body[data-theme="cat"] .ios-sheet-create-btn {
   padding: 20px 10px;
   font-size: 13px;
   color: var(--text-tertiary);
+}
+
+/* ============================================================ */
+/*  My Wave (Smart Recommendation Stream), Offline & Profile UI */
+/* ============================================================ */
+.my-wave-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px;
+  margin-bottom: 18px;
+  border-radius: 20px !important;
+  background: linear-gradient(135deg, rgba(110, 182, 255, 0.22) 0%, rgba(167, 139, 250, 0.2) 50%, rgba(236, 72, 153, 0.16) 100%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  overflow: hidden;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.35);
+}
+
+body[data-theme="cat"] .my-wave-card {
+  background: linear-gradient(135deg, rgba(255, 179, 198, 0.24) 0%, rgba(255, 202, 166, 0.2) 55%, rgba(216, 180, 254, 0.22) 100%) !important;
+  border-color: rgba(255, 198, 218, 0.34) !important;
+}
+
+.my-wave-bg-orbs {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 0;
+}
+
+.wave-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(32px);
+  opacity: 0.45;
+  animation: waveOrbFloat 7s ease-in-out infinite alternate;
+}
+
+.wave-orb-1 {
+  width: 140px;
+  height: 140px;
+  top: -40px;
+  left: -20px;
+  background: var(--accent);
+}
+
+.wave-orb-2 {
+  width: 130px;
+  height: 130px;
+  bottom: -45px;
+  right: 10%;
+  background: #a78bfa;
+  animation-delay: -3.5s;
+}
+
+.wave-ring {
+  position: absolute;
+  right: 36px;
+  top: 50%;
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  transform: translate(0, -50%) scale(0.9);
+  opacity: 0.35;
+}
+
+.my-wave-card.is-playing .wave-ring-1 {
+  animation: waveRingPulse 2.4s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+.my-wave-card.is-playing .wave-ring-2 {
+  animation: waveRingPulse 2.4s cubic-bezier(0.16, 1, 0.3, 1) 1.2s infinite;
+}
+
+@keyframes waveOrbFloat {
+  0% { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(18px, 10px) scale(1.15); }
+}
+
+@keyframes waveRingPulse {
+  0% { transform: translate(0, -50%) scale(0.8); opacity: 0.65; }
+  100% { transform: translate(0, -50%) scale(2.1); opacity: 0; }
+}
+
+.my-wave-content {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-width: 0;
+}
+
+.my-wave-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1.4px;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+
+.my-wave-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+
+.my-wave-card.is-playing .my-wave-live-dot {
+  animation: liveIndicatorPulse 1.4s ease-in-out infinite;
+}
+
+.my-wave-title {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.my-wave-subtitle {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+  line-height: 1.35;
+}
+
+.my-wave-actions {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.my-wave-play-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: none;
+  background: var(--accent);
+  color: #0b0d14;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 6px 20px var(--accent-glow);
+  transition: transform 0.36s var(--ios-spring), filter 0.2s ease;
+}
+
+.my-wave-play-btn:active {
+  transform: scale(0.96);
+}
+
+.my-wave-refresh-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.36s var(--ios-spring), background 0.2s ease;
+}
+
+.my-wave-refresh-btn:active {
+  transform: scale(0.94);
+}
+
+/* Library Filter Tabs (Playlists vs Offline) */
+.library-filter-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+/* Track Download Button & Offline States */
+.track-download-btn {
+  color: var(--text-secondary);
+  position: relative;
+}
+
+.track-download-btn.is-downloaded {
+  color: #34d399 !important;
+  background: rgba(52, 211, 153, 0.14) !important;
+  border-radius: 10px !important;
+}
+
+.track-download-btn.is-downloading {
+  color: var(--accent) !important;
+  pointer-events: none;
+}
+
+.track-download-spinner {
+  width: 15px;
+  height: 15px;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+.track-source-badge.offline {
+  background: rgba(52, 211, 153, 0.18);
+  color: #34d399;
+}
+
+.fs-action-pill.is-downloaded {
+  border-color: rgba(52, 211, 153, 0.45);
+  color: #34d399;
+  background: rgba(52, 211, 153, 0.14);
+}
+
+/* Profile Account Modal */
+.profile-modal-overlay {
+  z-index: 9820 !important;
+  background: rgba(6, 7, 12, 0.78);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  opacity: 0;
+  transition: opacity 0.34s var(--ios-ease);
+}
+
+.profile-modal-overlay.is-open {
+  opacity: 1;
+}
+
+.profile-modal-overlay.is-closing {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.profile-modal-dialog {
+  width: 100%;
+  max-width: 390px;
+  padding: 28px 24px 24px 24px;
+  position: relative;
+  border-radius: 24px;
+  background: rgba(20, 22, 34, 0.94) !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  transform: scale(0.94) translate3d(0, 18px, 0);
+  opacity: 0;
+  transition: transform 0.4s var(--ios-spring), opacity 0.34s var(--ios-ease);
+}
+
+.profile-modal-overlay.is-open .profile-modal-dialog {
+  transform: scale(1) translate3d(0, 0, 0);
+  opacity: 1;
+}
+
+.profile-modal-overlay.is-closing .profile-modal-dialog {
+  transform: scale(0.95) translate3d(0, 14px, 0);
+  opacity: 0;
+}
+
+body[data-theme="cat"] .profile-modal-dialog {
+  background: rgba(34, 24, 44, 0.95) !important;
+  border-color: rgba(255, 198, 218, 0.3) !important;
+}
+
+.profile-modal-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+
+.profile-modal-avatar {
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent) 0%, #a78bfa 100%);
+  color: #fff;
+  font-size: 26px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8px 26px var(--accent-glow);
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+
+.profile-modal-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.profile-modal-name {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.profile-modal-email {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.profile-sync-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgba(52, 211, 153, 0.12);
+  border: 1px solid rgba(52, 211, 153, 0.28);
+  color: #6ee7b7;
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.profile-stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.profile-stat-card {
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.profile-stat-val {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.profile-stat-label {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.profile-modal-logout-btn {
+  width: 100%;
+  min-height: 44px;
+  border-radius: 12px;
+  background: rgba(255, 107, 107, 0.16) !important;
+  border: 1px solid rgba(255, 107, 107, 0.35) !important;
+  color: #ff9c9c !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 /* Global Interactive Press Feedback (Scale down 0.96 with iOS spring bounce) */

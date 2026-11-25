@@ -143,64 +143,39 @@ select {
     filter: none !important;
   }
 
-  /* Crisp GPU-accelerated Slide & Fade on iOS (zero blur filter glitches) */
+  /* Crisp single-pass view transitions (never double-fire on .view.active) */
   .view,
   .view.active,
   .view.motion-blur,
   #view-mobile-playlists,
   #view-playlist,
   .mobile-playlists-grid {
-    filter: none !important;
-    -webkit-filter: none !important;
+    -webkit-filter: none;
   }
 
   .view.active {
-    animation: iosViewFadeIn 0.4s cubic-bezier(0.32, 0.72, 0, 1) !important;
+    animation: none;
   }
 
-  .view.active.slide-from-right {
-    animation: iosViewSlideRight 0.42s cubic-bezier(0.32, 0.72, 0, 1) !important;
+  body[data-transition="liquid-fade"] .view.active.is-entering {
+    animation: liquidFadeScaleIn calc(0.44s * var(--anim-duration-factor)) cubic-bezier(0.16, 1, 0.3, 1) both !important;
   }
 
-  .view.active.slide-from-left {
-    animation: iosViewSlideLeft 0.42s cubic-bezier(0.32, 0.72, 0, 1) !important;
+  .my-wave-card {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 16px;
+    gap: 14px;
   }
 
-  .view.active.slide-from-bottom {
-    animation: iosViewFadeIn 0.42s cubic-bezier(0.32, 0.72, 0, 1) !important;
+  .my-wave-actions {
+    width: 100%;
+    justify-content: space-between;
   }
 
-  @keyframes iosViewFadeIn {
-    from {
-      opacity: 0;
-      transform: translate3d(0, 14px, 0);
-    }
-    to {
-      opacity: 1;
-      transform: translate3d(0, 0, 0);
-    }
-  }
-
-  @keyframes iosViewSlideRight {
-    from {
-      opacity: 0;
-      transform: translate3d(24px, 0, 0);
-    }
-    to {
-      opacity: 1;
-      transform: translate3d(0, 0, 0);
-    }
-  }
-
-  @keyframes iosViewSlideLeft {
-    from {
-      opacity: 0;
-      transform: translate3d(-24px, 0, 0);
-    }
-    to {
-      opacity: 1;
-      transform: translate3d(0, 0, 0);
-    }
+  .my-wave-play-btn {
+    flex: 1;
+    justify-content: center;
   }
 
   /* Sidebar becomes crisp Slide-Over Drawer above backdrop */
@@ -341,8 +316,10 @@ select {
   }
 
   .track-actions .icon-btn {
-    min-width: 38px;
-    min-height: 40px;
+    min-width: 34px;
+    min-height: 38px;
+    width: 34px;
+    height: 38px;
   }
 
   .track-add-playlist-btn {

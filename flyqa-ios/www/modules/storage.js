@@ -6,19 +6,20 @@ const STORAGE_KEYS = {
   SETTINGS: 'glass_player_settings',
   EQ_PRESETS: 'glass_player_eq_presets',
   EQ_STATE: 'glass_player_eq_state',
-  PLAYLISTS_CACHE: 'glass_player_playlists_cache'
+  PLAYLISTS_CACHE: 'glass_player_playlists_cache',
+  PLAY_HISTORY: 'flyqa_play_history'
 };
 
 const DEFAULT_SETTINGS = {
   // Theme & Appearance
-  theme: 'classic-dark', // 'oled', 'classic-dark', 'light', 'cyberpunk', 'retro-synth', 'monochrome'
+  theme: 'classic-dark', // 'oled', 'classic-dark', 'light', 'cyberpunk', 'retro-synth', 'monochrome', 'cat'
   dynamicPalette: true,
   accentColor: '#6eb6ff',
   cornerRadius: 'medium', // 'sharp', 'medium', 'pill'
   blurIntensity: 'medium', // 'none', 'low', 'medium', 'high'
   
   // Animations & Player Style
-  transitionStyle: 'slide', // 'slide', 'fade', 'zoom'
+  transitionStyle: 'ios-slide', // 'ios-slide', 'liquid-fade', 'spring-bounce', 'minimal-instant'
   playerStyle: 'cover', // 'cover', 'vinyl', 'cassette', 'tilt'
   animSpeed: '1x', // '0.5x', '1x', '1.5x'
   reduceMotion: false,
@@ -68,12 +69,50 @@ class StorageManager {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.SETTINGS);
       if (saved) {
-        return { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+        const merged = { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+        const legacyTransitions = {
+          slide: 'ios-slide',
+          fade: 'liquid-fade',
+          zoom: 'spring-bounce'
+        };
+        if (legacyTransitions[merged.transitionStyle]) {
+          merged.transitionStyle = legacyTransitions[merged.transitionStyle];
+        }
+        return merged;
       }
     } catch (e) {
       console.warn('Failed to load settings from localStorage:', e);
     }
     return { ...DEFAULT_SETTINGS };
+  }
+
+  loadPlayHistory() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.PLAY_HISTORY);
+      return raw ? JSON.parse(raw) : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  recordPlayHistory(track) {
+    if (!track || !track.title) return;
+    try {
+      const history = this.loadPlayHistory();
+      const entry = {
+        videoId: track.videoId || track.video_id || '',
+        title: track.title || '',
+        artist: track.artist || '',
+        thumbnail: track.thumbnail || '',
+        source: track.source || '',
+        playedAt: Date.now()
+      };
+      const filtered = history.filter((item) =>
+        !(item.title === entry.title && item.artist === entry.artist)
+      );
+      filtered.unshift(entry);
+      localStorage.setItem(STORAGE_KEYS.PLAY_HISTORY, JSON.stringify(filtered.slice(0, 60)));
+    } catch (e) {}
   }
 
   saveSettings(newSettings) {
