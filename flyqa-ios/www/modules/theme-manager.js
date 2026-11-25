@@ -68,6 +68,18 @@ const THEMES = {
     textSecondary: '#a0a0a0',
     textTertiary: '#666666',
     defaultAccent: '#ffffff'
+  },
+  'cat': {
+    name: 'Котики',
+    bg: '#1a1423',
+    glassBg: 'rgba(255, 208, 224, 0.09)',
+    glassHover: 'rgba(255, 208, 224, 0.16)',
+    border: 'rgba(255, 198, 218, 0.24)',
+    textPrimary: '#fff6f0',
+    textSecondary: '#e8cad8',
+    textTertiary: '#b392a5',
+    defaultAccent: '#ffb3c6',
+    secondaryAccent: '#ffcaa6'
   }
 };
 
@@ -89,9 +101,37 @@ class ThemeManager {
     if (!s.dynamicPalette && s.accentColor) {
       this.setCustomAccent(s.accentColor);
     }
+
+    this._initCatMicroInteractions();
   }
 
-  applyTheme(themeKey) {
+  _initCatMicroInteractions() {
+    if (this._catTapBound) return;
+    this._catTapBound = true;
+
+    document.addEventListener('pointerdown', (e) => {
+      if (this.currentTheme !== 'cat') return;
+      if (window.storageManager?.getSetting('reduceMotion')) return;
+      const interactive = e.target.closest('button, .track-item, .mobile-playlist-card, .theme-card, .ios-tab-btn, .player-cover-wrap, .sidebar-item');
+      if (!interactive) return;
+
+      const x = e.clientX;
+      const y = e.clientY;
+      if (typeof x !== 'number' || typeof y !== 'number' || (x === 0 && y === 0)) return;
+
+      const paw = document.createElement('span');
+      paw.className = 'cat-tap-paw';
+      paw.setAttribute('aria-hidden', 'true');
+      paw.style.left = `${x}px`;
+      paw.style.top = `${y}px`;
+      paw.style.setProperty('--paw-rot', `${(Math.random() * 34 - 17).toFixed(1)}deg`);
+      paw.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><ellipse cx="7" cy="8.5" rx="2.1" ry="2.7"/><ellipse cx="12" cy="6.8" rx="2.1" ry="2.7"/><ellipse cx="17" cy="8.5" rx="2.1" ry="2.7"/><ellipse cx="4.5" cy="13" rx="1.8" ry="2.3"/><path d="M12 11.2c-3.3 0-5.8 2.5-5.8 5.2 0 1.8 1.4 3 3.1 3 1.1 0 1.8-.4 2.7-.4s1.6.4 2.7.4c1.7 0 3.1-1.2 3.1-3 0-2.7-2.5-5.2-5.8-5.2z"/></svg>`;
+      document.body.appendChild(paw);
+      setTimeout(() => paw.remove(), 620);
+    }, { passive: true });
+  }
+
+  applyTheme(themeKey, options = {}) {
     if (!THEMES[themeKey]) themeKey = 'classic-dark';
     this.currentTheme = themeKey;
     const theme = THEMES[themeKey];
@@ -105,14 +145,36 @@ class ThemeManager {
     root.style.setProperty('--text-secondary', theme.textSecondary);
     root.style.setProperty('--text-tertiary', theme.textTertiary);
 
+    if (options.userSelected) {
+      window.storageManager.saveSettings({ accentColor: theme.defaultAccent });
+      const picker = document.getElementById('setting-accent-picker');
+      if (picker) picker.value = theme.defaultAccent;
+    }
+
     // If dynamic palette is not active, set default theme accent
     if (!window.storageManager.getSetting('dynamicPalette')) {
       const customAccent = window.storageManager.getSetting('accentColor');
       this.setCustomAccent(customAccent || theme.defaultAccent);
-    } else if (this.extractedColors) {
+    } else if (this.extractedColors && themeKey !== 'cat') {
       this.setDynamicAccent(this.extractedColors.accent);
     } else {
       this.setCustomAccent(theme.defaultAccent);
+    }
+
+    if (window.audioVisualizer && theme.secondaryAccent && (!this.extractedColors || themeKey === 'cat')) {
+      window.audioVisualizer.setColors(theme.defaultAccent, theme.secondaryAccent);
+    }
+
+    const bgCanvas = document.getElementById('bg-canvas');
+    if (bgCanvas && !this.extractedColors) {
+      if (themeKey === 'cat') {
+        bgCanvas.style.setProperty('--bg-color-1', 'rgba(255, 179, 198, 0.28)');
+        bgCanvas.style.setProperty('--bg-color-2', 'rgba(216, 180, 254, 0.24)');
+        bgCanvas.classList.add('active');
+      } else {
+        bgCanvas.style.removeProperty('--bg-color-1');
+        bgCanvas.style.removeProperty('--bg-color-2');
+      }
     }
 
     document.body.setAttribute('data-theme', themeKey);

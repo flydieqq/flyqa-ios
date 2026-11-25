@@ -32,6 +32,9 @@ class AudioVisualizer {
     this.secondaryColor = '#ff61d2';
     this._gradCacheKey = '';
     this._cachedGrad = null;
+    this._resizeObserver = null;
+    this._silentFrames = 0;
+    this._fallbackPhase = 0;
   }
 
   init(canvasElement) {
@@ -39,7 +42,19 @@ class AudioVisualizer {
     this.ctx = this.canvas.getContext('2d', { alpha: true });
     this.resize();
 
-    window.addEventListener('resize', () => this.resize());
+    if (this._onResize) window.removeEventListener('resize', this._onResize);
+    this._onResize = () => this.resize();
+    window.addEventListener('resize', this._onResize);
+    window.addEventListener('orientationchange', () => setTimeout(() => this.resize(), 120));
+
+    if (typeof ResizeObserver !== 'undefined') {
+      if (this._resizeObserver) this._resizeObserver.disconnect();
+      this._resizeObserver = new ResizeObserver(() => this.resize());
+      if (this.canvas.parentElement) {
+        this._resizeObserver.observe(this.canvas.parentElement);
+      }
+      this._resizeObserver.observe(this.canvas);
+    }
 
     // Init particle pool
     this._initParticles();
@@ -53,16 +68,19 @@ class AudioVisualizer {
   resize() {
     if (!this.canvas) return;
     const rect = this.canvas.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    this.width = rect.width;
-    this.height = rect.height;
-    this.canvas.width = rect.width * dpr;
-    this.canvas.height = rect.height * dpr;
+    const parentRect = this.canvas.parentElement ? this.canvas.parentElement.getBoundingClientRect() : null;
+    const cssWidth = Math.min(rect.width || parentRect?.width || window.innerWidth, window.innerWidth);
+    const cssHeight = rect.height || parentRect?.height || 0;
+    if (!cssWidth || !cssHeight) return;
+
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    this.width = cssWidth;
+    this.height = cssHeight;
+    this.canvas.width = Math.round(cssWidth * dpr);
+    this.canvas.height = Math.round(cssHeight * dpr);
     this._gradCacheKey = '';
     if (this.ctx) {
-      this.ctx.resetTransform();
-      this.ctx.scale(dpr, dpr);
+      this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
   }
 
@@ -126,8 +144,17 @@ class AudioVisualizer {
       return;
     }
 
+    const activeAudio = typeof window.flyqaGetActiveAudio === 'function'
+      ? window.flyqaGetActiveAudio()
+      : document.getElementById('audio-element');
+    const isAudioPlaying = !!(activeAudio && !activeAudio.paused && !activeAudio.ended);
+
+    if (isAudioPlaying && window.audioEngine?.ctx?.state === 'suspended') {
+      window.audioEngine.ensureRunning();
+    }
+
     const analyser = window.audioEngine ? window.audioEngine.analyser : null;
-    if (!analyser) {
+    if (!analyser && !isAudioPlaying) {
       this.ctx.clearRect(0, 0, this.width, this.height);
       return;
     }
@@ -138,15 +165,39 @@ class AudioVisualizer {
     }
 
     // Allocate buffers if needed
-    if (!this.freqData || this.bufferLength !== analyser.frequencyBinCount) {
-      this.bufferLength = analyser.frequencyBinCount;
+    const targetLen = analyser ? analyser.frequencyBinCount : 1024;
+    if (!this.freqData || this.bufferLength !== targetLen) {
+      this.bufferLength = targetLen;
       this.freqData = new Uint8Array(this.bufferLength);
       this.timeData = new Uint8Array(this.bufferLength);
       this.peakValues = new Float32Array(this.bufferLength).fill(0);
     }
 
-    analyser.getByteFrequencyData(this.freqData);
-    analyser.getByteTimeDomainData(this.timeData);
+    if (analyser) {
+      analyser.getByteFrequencyData(this.freqData);
+      analyser.getByteTimeDomainData(this.timeData);
+    } else {
+      this.freqData.fill(0);
+      this.timeData.fill(128);
+    }
+
+    // Detect if WebAudio analyser is active vs silent fallback (e.g. iOS native HLS element)
+    let energy = 0;
+    for (let i = 0; i < Math.min(64, this.bufferLength); i++) {
+      energy += this.freqData[i];
+    }
+
+    if (energy > 0) {
+      this._silentFrames = 0;
+    } else if (isAudioPlaying) {
+      this._silentFrames++;
+      // Only synthesize responsive playback spectrum when native HLS/non-CORS bypasses WebAudio FFT
+      if (this._silentFrames > 10) {
+        this._populatePlaybackFallback(activeAudio.currentTime || 0, dt);
+      }
+    } else {
+      this._silentFrames = 0;
+    }
 
     const mode = window.storageManager.getSetting('visualizerMode') || 'spectrum';
     const sensitivity = window.storageManager.getSetting('visualizerSensitivity') || 1.2;
@@ -213,7 +264,11 @@ class AudioVisualizer {
       const y = h - barHeight;
 
       ctx.beginPath();
-      ctx.roundRect(x, y, barWidth, barHeight, [4, 4, 0, 0]);
+      if (typeof ctx.roundRect === 'function') {
+        ctx.roundRect(x, y, barWidth, barHeight, [4, 4, 0, 0]);
+      } else {
+        ctx.rect(x, y, barWidth, barHeight);
+      }
       ctx.fill();
 
       if (barHeight > (this.peakValues[i] || 0)) {
@@ -382,6 +437,27 @@ class AudioVisualizer {
       ctx.fill();
     }
     ctx.globalAlpha = 1.0;
+  }
+
+  _populatePlaybackFallback(mediaTime, dt) {
+    this._fallbackPhase += 0.08 * dt;
+    const t = mediaTime * 4.2 + this._fallbackPhase;
+    const beat = Math.pow(Math.max(0, Math.sin(t * 1.9)), 3);
+    const limit = Math.min(this.bufferLength, 512);
+    for (let i = 0; i < limit; i++) {
+      const ratio = i / limit;
+      const bassEnvelope = Math.exp(-ratio * 5.2) * (0.55 + 0.45 * beat);
+      const midWave = Math.sin(ratio * 18 - t * 1.3) * 0.25 + 0.25;
+      const shimmer = Math.cos(ratio * 34 + t * 2.1) * 0.12 + 0.12;
+      const val = Math.min(1, bassEnvelope * 0.85 + midWave * (1 - ratio * 0.5) * 0.45 + shimmer * 0.35);
+      this.freqData[i] = Math.round(val * 225);
+    }
+    for (let i = 0; i < this.bufferLength; i++) {
+      const ratio = i / this.bufferLength;
+      const wave = Math.sin(ratio * Math.PI * 10 + t * 2.4) * (0.35 + 0.4 * beat)
+        + Math.sin(ratio * Math.PI * 23 - t * 1.7) * 0.18;
+      this.timeData[i] = Math.max(0, Math.min(255, Math.round(128 + wave * 82)));
+    }
   }
 }
 

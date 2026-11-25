@@ -196,7 +196,7 @@
 
     overlay.addEventListener('touchstart', (e) => {
       if (!overlay.classList.contains('active')) return;
-      // Do not intercept seek bar or volume slider drags
+      // Do not intercept seek bar drags
       if (e.target.closest('#fs-progress-wrap') || e.target.closest('input[type="range"]')) {
         isTracking = false;
         return;
@@ -230,18 +230,17 @@
       const velocity = currentDeltaY / elapsed;
 
       if (currentDeltaY > 95 || (currentDeltaY > 40 && velocity > 0.45)) {
-        overlay.style.transform = '';
         if (typeof global.closeFullscreenPlayer === 'function') {
-          global.closeFullscreenPlayer();
+          global.closeFullscreenPlayer({ fromSwipe: true });
         }
       } else {
-        overlay.style.transition = 'transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.28s ease';
+        overlay.style.transition = 'transform 0.42s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.36s cubic-bezier(0.16, 1, 0.3, 1)';
         overlay.style.transform = 'translateY(0)';
         overlay.style.opacity = '1';
         setTimeout(() => {
           overlay.style.transition = '';
           overlay.style.transform = '';
-        }, 290);
+        }, 430);
       }
       currentDeltaY = 0;
     };
@@ -259,6 +258,7 @@
     const authOverlay = $('#auth-modal-overlay');
     const contextMenu = $('#context-menu');
     const fullscreenPlayer = $('#fullscreen-player');
+    const addPlaylistSheet = $('#add-to-playlist-overlay');
 
     sidebar?.classList.remove('ios-open', 'open', 'active');
     if (backdrop) {
@@ -268,6 +268,14 @@
     if (authOverlay && authOverlay.style.display !== 'none') {
       authOverlay.style.display = 'none';
       authOverlay.setAttribute('aria-hidden', 'true');
+    }
+    if (addPlaylistSheet && addPlaylistSheet.style.display !== 'none') {
+      if (typeof global.closeAddToPlaylistSheet === 'function') {
+        global.closeAddToPlaylistSheet();
+      } else {
+        addPlaylistSheet.style.display = 'none';
+        addPlaylistSheet.setAttribute('aria-hidden', 'true');
+      }
     }
     if (contextMenu) contextMenu.style.display = 'none';
     // Close fullscreen player if stuck open
@@ -283,6 +291,51 @@
     }
     document.querySelectorAll('.blurred').forEach((el) => el.classList.remove('blurred'));
     document.querySelectorAll('.motion-blur').forEach((el) => el.classList.remove('motion-blur'));
+  }
+
+  function updateTabIndicator(activeBtn) {
+    const tabbar = $('#ios-tabbar');
+    const indicator = $('#ios-tab-indicator');
+    if (!tabbar || !indicator) return;
+
+    const barRect = tabbar.getBoundingClientRect();
+    if (!activeBtn || !barRect.width || !barRect.height || getComputedStyle(tabbar).display === 'none') {
+      indicator.style.opacity = '0';
+      return;
+    }
+
+    const btnRect = activeBtn.getBoundingClientRect();
+    if (!btnRect.width) return;
+
+    const padX = 4;
+    const width = Math.max(44, btnRect.width - padX * 2);
+    const x = (btnRect.left - barRect.left) + padX;
+    const top = Math.max(5, btnRect.top - barRect.top);
+    const height = Math.max(42, btnRect.height - 2);
+
+    indicator.style.width = `${width}px`;
+    indicator.style.height = `${height}px`;
+    indicator.style.top = `${top}px`;
+    indicator.style.transform = `translate3d(${x}px, 0, 0)`;
+    indicator.style.opacity = '1';
+  }
+
+  function syncTabBar(viewName) {
+    const tabBtns = document.querySelectorAll('.ios-tab-btn');
+    if (!tabBtns.length) return;
+    const mapped = (viewName === 'mobile-playlists' || viewName === 'playlist') ? 'playlists' : viewName;
+    let activeBtn = null;
+    tabBtns.forEach((b) => {
+      const match = b.dataset.iosView === mapped;
+      b.classList.toggle('active', match);
+      if (match) activeBtn = b;
+    });
+    if (activeBtn) {
+      requestAnimationFrame(() => updateTabIndicator(activeBtn));
+    } else {
+      const indicator = $('#ios-tab-indicator');
+      if (indicator) indicator.style.opacity = '0';
+    }
   }
 
   function initMobileNav() {
@@ -329,12 +382,23 @@
         closeAllOverlays();
         tabBtns.forEach((b) => b.classList.remove('active'));
         btn.classList.add('active');
+        updateTabIndicator(btn);
 
         const targetView = view === 'playlists' ? 'mobile-playlists' : view;
         if (typeof global.switchView === 'function') {
           global.switchView(targetView);
         }
       });
+    });
+
+    // Sync initial floating indicator position
+    requestAnimationFrame(() => {
+      const active = $('#ios-tabbar .ios-tab-btn.active');
+      if (active) updateTabIndicator(active);
+    });
+    window.addEventListener('resize', () => {
+      const active = $('#ios-tabbar .ios-tab-btn.active');
+      if (active) updateTabIndicator(active);
     });
 
     // Prevent pinch zoom gestures on iOS
@@ -345,7 +409,8 @@
     updateMediaSession,
     updateMediaPositionState,
     closeAllOverlays,
-    primeAudioForGesture
+    primeAudioForGesture,
+    syncTabBar
   };
 
   window.addEventListener('DOMContentLoaded', () => {

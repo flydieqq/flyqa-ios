@@ -29,6 +29,7 @@ class AudioEngine {
 
     // Analyser Node for Visualizer
     this.analyser = null;
+    this._fallbackSources = new WeakMap();
 
     // Master / Limiter Node to prevent digital clipping
     this.limiterNode = null;
@@ -185,7 +186,25 @@ class AudioEngine {
 
   ensureRunning() {
     if (this.ctx && this.ctx.state === 'suspended') {
-      this.ctx.resume();
+      return this.ctx.resume().catch(() => {});
+    }
+    return Promise.resolve();
+  }
+
+  connectFallbackStream(mediaElement) {
+    if (!mediaElement || !this.ctx || !this.analyser) return;
+    if (this._fallbackSources.has(mediaElement)) return;
+    try {
+      const captureFn = mediaElement.captureStream || mediaElement.mozCaptureStream;
+      if (typeof captureFn !== 'function') return;
+      const stream = captureFn.call(mediaElement);
+      if (stream && stream.getAudioTracks().length > 0) {
+        const src = this.ctx.createMediaStreamSource(stream);
+        src.connect(this.analyser);
+        this._fallbackSources.set(mediaElement, src);
+      }
+    } catch (e) {
+      // Cross-origin or unsupported captureStream; visualizer will gracefully handle
     }
   }
 

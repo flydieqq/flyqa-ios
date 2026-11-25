@@ -103,6 +103,16 @@ select {
     align-items: center;
     gap: 6px;
     cursor: pointer;
+    transition: transform 0.36s cubic-bezier(0.32, 0.72, 0, 1), background 0.25s ease;
+  }
+
+  .ios-auth-pill:active {
+    transform: scale(0.96);
+  }
+
+  body[data-theme="cat"] .ios-auth-pill {
+    background: rgba(255, 179, 198, 0.18);
+    border-color: rgba(255, 198, 218, 0.42);
   }
 
   /* Main App Container: MUST keep z-index: auto so .sidebar (900) stacks above .ios-sidebar-backdrop (890) */
@@ -114,7 +124,7 @@ select {
     bottom: auto !important;
     z-index: auto !important;
     padding-top: calc(var(--safe-top) + 64px);
-    padding-bottom: calc(var(--safe-bottom) + 138px);
+    padding-bottom: calc(env(safe-area-inset-bottom, 16px) + 148px);
     height: 100dvh;
     width: 100%;
     display: block;
@@ -126,23 +136,71 @@ select {
     z-index: 5;
     width: 100%;
     height: 100%;
-    padding: 12px calc(14px + var(--safe-right)) 24px calc(14px + var(--safe-left));
+    padding: 12px calc(14px + var(--safe-right)) 28px calc(14px + var(--safe-left));
     overflow-y: auto;
     overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
     filter: none !important;
   }
 
-  /* Prevent iOS WebKit blur artifacts during tab transitions */
+  /* Crisp GPU-accelerated Slide & Fade on iOS (zero blur filter glitches) */
   .view,
   .view.active,
   .view.motion-blur,
   #view-mobile-playlists,
   #view-playlist,
   .mobile-playlists-grid {
-    animation: none !important;
     filter: none !important;
     -webkit-filter: none !important;
+  }
+
+  .view.active {
+    animation: iosViewFadeIn 0.4s cubic-bezier(0.32, 0.72, 0, 1) !important;
+  }
+
+  .view.active.slide-from-right {
+    animation: iosViewSlideRight 0.42s cubic-bezier(0.32, 0.72, 0, 1) !important;
+  }
+
+  .view.active.slide-from-left {
+    animation: iosViewSlideLeft 0.42s cubic-bezier(0.32, 0.72, 0, 1) !important;
+  }
+
+  .view.active.slide-from-bottom {
+    animation: iosViewFadeIn 0.42s cubic-bezier(0.32, 0.72, 0, 1) !important;
+  }
+
+  @keyframes iosViewFadeIn {
+    from {
+      opacity: 0;
+      transform: translate3d(0, 14px, 0);
+    }
+    to {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+    }
+  }
+
+  @keyframes iosViewSlideRight {
+    from {
+      opacity: 0;
+      transform: translate3d(24px, 0, 0);
+    }
+    to {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+    }
+  }
+
+  @keyframes iosViewSlideLeft {
+    from {
+      opacity: 0;
+      transform: translate3d(-24px, 0, 0);
+    }
+    to {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+    }
   }
 
   /* Sidebar becomes crisp Slide-Over Drawer above backdrop */
@@ -168,12 +226,23 @@ select {
     width: min(82vw, 300px) !important;
     z-index: 900 !important;
     padding: calc(var(--safe-top) + 16px) 14px calc(var(--safe-bottom) + 16px) calc(14px + var(--safe-left)) !important;
-    background: rgba(14, 15, 24, 0.98) !important;
-    backdrop-filter: blur(24px);
-    -webkit-backdrop-filter: blur(24px);
+    background: rgba(14, 15, 24, 0.96) !important;
+    backdrop-filter: blur(26px) saturate(180%);
+    -webkit-backdrop-filter: blur(26px) saturate(180%);
     transform: translateX(-106%);
-    transition: transform 0.32s cubic-bezier(0.16, 1, 0.3, 1);
-    border-radius: 0 20px 20px 0 !important;
+    transition: transform 0.42s cubic-bezier(0.32, 0.72, 0, 1);
+    border-radius: 0 22px 22px 0 !important;
+  }
+
+  .ios-sidebar-backdrop.active {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 890;
+    background: rgba(4, 5, 10, 0.62);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    animation: modalIn 0.36s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   /* Dedicated Mobile Playlists Grid */
@@ -197,12 +266,12 @@ select {
     color: var(--text-primary);
     text-align: left;
     cursor: pointer;
-    transition: background 0.2s ease, transform 0.15s ease;
+    transition: background 0.25s ease, transform 0.36s cubic-bezier(0.32, 0.72, 0, 1);
   }
 
   .mobile-playlist-card:active {
-    transform: scale(0.98);
-    background: rgba(255, 255, 255, 0.11);
+    transform: scale(0.96);
+    background: rgba(255, 255, 255, 0.12);
   }
 
   .mobile-pl-icon {
@@ -267,6 +336,19 @@ select {
 
   .track-actions {
     opacity: 1 !important;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .track-actions .icon-btn {
+    min-width: 38px;
+    min-height: 40px;
+  }
+
+  .track-add-playlist-btn {
+    color: var(--accent) !important;
+    background: rgba(255, 255, 255, 0.06) !important;
+    border-radius: 10px !important;
   }
 
   /* Search & Playlist Views Responsive */
@@ -294,31 +376,219 @@ select {
     gap: 10px;
   }
 
-  .eq-bands-wrapper {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    padding-bottom: 8px;
+  /* Equalizer strictly responsive on 375-430px iPhones */
+  .eq-top-actions {
+    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
   }
 
-  .eq-effects-row,
-  .settings-grid,
-  .themes-selector-grid {
+  .eq-vis-shortcut {
+    margin-bottom: 0 !important;
+    padding: 8px 12px !important;
+  }
+
+  .eq-container {
+    width: 100%;
+    max-width: 100%;
+    padding: 14px !important;
+    gap: 16px !important;
+    box-sizing: border-box;
+    overflow: hidden;
+  }
+
+  .eq-toolbar {
+    flex-direction: column;
+    align-items: stretch !important;
+    gap: 10px;
+    width: 100%;
+  }
+
+  .eq-preset-select-wrap {
+    width: 100%;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .eq-preset-select-wrap .glass-select {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .eq-custom-btns {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .eq-custom-btns .glass-btn {
+    margin-bottom: 0 !important;
+    padding: 8px 12px !important;
+    flex: 1 1 auto;
+    justify-content: center;
+    font-size: 12px;
+  }
+
+  .eq-bands-wrapper {
+    width: 100%;
+    max-width: 100%;
+    padding: 14px 10px !important;
+    gap: 6px !important;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    justify-content: flex-start !important;
+    box-sizing: border-box;
+    scrollbar-width: none;
+  }
+
+  .eq-bands-wrapper::-webkit-scrollbar {
+    display: none;
+  }
+
+  .eq-bands-list {
+    flex: 0 0 auto !important;
+    gap: 4px !important;
+    justify-content: flex-start !important;
+  }
+
+  .eq-slider-col {
+    flex: 0 0 36px;
+    min-width: 36px;
+    gap: 6px !important;
+  }
+
+  .eq-bands-divider {
+    flex-shrink: 0;
+    height: 136px !important;
+    margin: 0 4px !important;
+  }
+
+  .eq-gain-val {
+    min-width: 34px !important;
+    font-size: 10px !important;
+  }
+
+  .eq-band-label {
+    font-size: 10px !important;
+  }
+
+  .eq-vertical-slider-wrap {
+    height: 132px !important;
+  }
+
+  .eq-v-slider {
+    height: 124px !important;
+    width: 28px !important;
+  }
+
+  .eq-effects-row {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+    width: 100%;
+  }
+
+  .effect-card {
+    padding: 14px !important;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .effect-header {
+    gap: 8px;
+  }
+
+  .effect-title {
+    font-size: 12px !important;
+    line-height: 1.3;
+  }
+
+  /* Visualizer strictly responsive on 375-430px iPhones */
+  .visualizer-container {
+    width: 100%;
+    max-width: 100%;
+    height: auto !important;
+    min-height: 360px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .visualizer-canvas {
+    width: 100% !important;
+    height: clamp(220px, 38dvh, 360px) !important;
+    flex: 1 1 auto;
+  }
+
+  .visualizer-controls-bar {
+    position: relative !important;
+    bottom: auto !important;
+    left: auto !important;
+    transform: none !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    border-radius: 0 0 16px 16px !important;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px 12px !important;
+    padding: 12px 10px !important;
+    box-shadow: none !important;
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
+    box-sizing: border-box;
+  }
+
+  .vis-modes-group {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px !important;
+  }
+
+  .vis-modes-group .pill-btn {
+    padding: 6px 11px !important;
+    min-height: 36px !important;
+    font-size: 12px !important;
+  }
+
+  .vis-divider {
+    display: none !important;
+  }
+
+  .vis-setting-item {
+    flex: 1 1 140px;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 6px !important;
+    font-size: 12px !important;
+  }
+
+  .settings-grid {
     grid-template-columns: 1fr !important;
   }
 
-  /* Mini-Player Bar docked neatly above iOS Bottom Tab Bar */
+  .themes-selector-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+  }
+
+  /* Mini-Player Bar docked neatly above iOS Liquid Glass Bottom Tab Bar */
   .player-bar {
     position: fixed;
-    bottom: calc(64px + var(--safe-bottom)) !important;
+    bottom: calc(max(env(safe-area-inset-bottom, 16px), 10px) + 68px) !important;
     left: calc(10px + var(--safe-left)) !important;
     right: calc(10px + var(--safe-right)) !important;
     height: 64px !important;
-    border-radius: 16px !important;
+    border-radius: 18px !important;
     padding: 8px 10px !important;
     gap: 10px !important;
-    background: rgba(18, 20, 32, 0.88) !important;
-    backdrop-filter: blur(26px);
-    -webkit-backdrop-filter: blur(26px);
+    background: rgba(18, 20, 32, 0.84) !important;
+    backdrop-filter: blur(26px) saturate(180%);
+    -webkit-backdrop-filter: blur(26px) saturate(180%);
     border: 1px solid rgba(255, 255, 255, 0.14) !important;
     z-index: 115 !important;
   }
@@ -355,7 +625,7 @@ select {
     height: 44px !important;
   }
 
-  /* iOS Bottom Tab Bar */
+  /* iOS Liquid Glass Bottom Navigation Bar */
   .ios-tabbar {
     display: flex;
     align-items: center;
@@ -364,19 +634,41 @@ select {
     bottom: 0;
     left: 0;
     right: 0;
-    height: calc(60px + var(--safe-bottom));
-    padding: 4px calc(6px + var(--safe-right)) var(--safe-bottom) calc(6px + var(--safe-left));
-    background: rgba(10, 11, 18, 0.92);
-    backdrop-filter: blur(26px);
-    -webkit-backdrop-filter: blur(26px);
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    min-height: calc(58px + max(env(safe-area-inset-bottom, 16px), 10px));
+    padding: 6px calc(8px + var(--safe-right)) max(env(safe-area-inset-bottom, 16px), 10px) calc(8px + var(--safe-left));
+    background: rgba(20, 20, 25, 0.7);
+    backdrop-filter: blur(25px) saturate(190%);
+    -webkit-backdrop-filter: blur(25px) saturate(190%);
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08);
     z-index: 120;
+    overflow: hidden;
+  }
+
+  .ios-tab-indicator {
+    position: absolute;
+    left: 0;
+    top: 6px;
+    border-radius: 16px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.15) 0%, rgba(255, 255, 255, 0.06) 100%);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    box-shadow: 0 4px 18px var(--accent-glow, rgba(110, 182, 255, 0.25)), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0;
+    transition: transform 0.44s cubic-bezier(0.32, 0.72, 0, 1),
+                width 0.44s cubic-bezier(0.32, 0.72, 0, 1),
+                opacity 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+    will-change: transform, width;
   }
 
   .ios-tab-btn {
+    position: relative;
+    z-index: 1;
     flex: 1;
     min-width: 44px;
-    min-height: 44px;
+    min-height: 46px;
+    padding: 4px 2px;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -384,19 +676,40 @@ select {
     gap: 3px;
     background: transparent;
     border: none;
+    border-radius: 14px;
     color: var(--text-tertiary);
     font-size: 10px;
     font-weight: 600;
     cursor: pointer;
-    transition: color 0.2s ease, transform 0.15s ease;
+    transition: color 0.32s cubic-bezier(0.16, 1, 0.3, 1),
+                transform 0.36s cubic-bezier(0.32, 0.72, 0, 1);
+  }
+
+  .ios-tab-btn svg {
+    transition: transform 0.38s cubic-bezier(0.32, 0.72, 0, 1), filter 0.3s ease;
   }
 
   .ios-tab-btn.active {
     color: var(--accent);
   }
 
+  .ios-tab-btn.active svg {
+    transform: translateY(-1px) scale(1.08);
+    filter: drop-shadow(0 0 8px var(--accent-glow));
+  }
+
   .ios-tab-btn:active {
-    transform: scale(0.92);
+    transform: scale(0.96);
+  }
+
+  body[data-theme="cat"] .ios-tabbar {
+    background: rgba(34, 24, 44, 0.72);
+    border-top-color: rgba(255, 198, 218, 0.22);
+  }
+
+  body[data-theme="cat"] .ios-tab-indicator {
+    background: linear-gradient(180deg, rgba(255, 179, 198, 0.24) 0%, rgba(255, 202, 166, 0.1) 100%);
+    border-color: rgba(255, 198, 218, 0.3);
   }
 
   /* Full-Screen Now Playing iOS Safe Area & Swipe Handle */
@@ -428,16 +741,17 @@ select {
   }
 
   .fs-stage {
-    padding: 0 22px 20px 22px !important;
+    padding: 0 22px 28px 22px !important;
+    justify-content: space-evenly;
   }
 
   .fs-cover-wrap {
-    width: clamp(220px, 66vw, 340px) !important;
-    height: clamp(220px, 66vw, 340px) !important;
+    width: clamp(230px, 68vw, 350px) !important;
+    height: clamp(230px, 68vw, 350px) !important;
   }
 
   .fs-playback-buttons {
-    gap: 14px !important;
+    gap: 16px !important;
   }
 
   .fs-ctrl-btn {

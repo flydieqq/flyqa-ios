@@ -112,7 +112,7 @@
       <button class="ios-icon-touch" id="ios-btn-menu" title="Меню и плейлисты" aria-label="Меню">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h14M3 18h18"/></svg>
       </button>
-      <span class="ios-brand-text">flyqa</span>
+      <span class="ios-brand-text">flyqa<span class="cat-brand-icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M5 4l3.5 4.2A8.5 8.5 0 0 1 12 7.5c1.2 0 2.4.25 3.5.7L19 4l1.2 6.8A7.5 7.5 0 0 1 12 20a7.5 7.5 0 0 1-8.2-9.2L5 4z"/><circle cx="9.2" cy="13" r="1.1" fill="#1a1423"/><circle cx="14.8" cy="13" r="1.1" fill="#1a1423"/><path d="M11 15.2h2l-1 1.2z" fill="#ff94b2"/></svg></span></span>
     </div>
     <button class="ios-auth-pill" id="ios-btn-auth">
       <span class="ios-auth-dot"></span>
@@ -269,6 +269,10 @@
             <p class="view-subtitle">Точная настройка звука, усиление басов и 3D-пространство</p>
           </div>
           <div class="eq-top-actions">
+            <button type="button" class="glass-btn small eq-vis-shortcut" id="btn-eq-open-vis">
+              <svg width="15" height="15" viewBox="0 0 18 18"><path d="M2 9h2l2-5 3 10 3-7 2 4h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+              Визуализатор
+            </button>
             <label class="toggle-switch">
               <input type="checkbox" id="eq-bypass-toggle" checked>
               <span class="slider"></span>
@@ -428,6 +432,12 @@
               <button class="theme-card" data-theme-name="monochrome">
                 <div class="theme-swatch" style="background:#121212; border-color:#ffffff;"></div>
                 <span>Monochrome</span>
+              </button>
+              <button class="theme-card theme-card-cat" data-theme-name="cat">
+                <div class="theme-swatch theme-swatch-cat" style="background:linear-gradient(135deg, #2d1f3d 0%, #5c3b5c 100%); border-color:#ffb3c6;">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="#ffb3c6"><path d="M5 4l3.5 4.2A8.5 8.5 0 0 1 12 7.5c1.2 0 2.4.25 3.5.7L19 4l1.2 6.8A7.5 7.5 0 0 1 12 20a7.5 7.5 0 0 1-8.2-9.2L5 4z"/></svg>
+                </div>
+                <span>Котики</span>
               </button>
             </div>
 
@@ -835,16 +845,45 @@
           </button>
         </div>
 
-        <!-- Bottom Controls Accessories: Volume Slider & Shortcuts -->
-        <div class="fs-bottom-row">
-          <div class="fs-volume-wrap">
-            <button class="fs-ctrl-btn fs-sm" id="fs-btn-volume" title="Громкость">
-              <svg width="20" height="20" viewBox="0 0 20 20" id="fs-volume-icon"><path d="M3 7h3l4-4v14l-4-4H3V7z" fill="currentColor"/><path d="M14 6a6 6 0 010 8M12 8a3 3 0 010 4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" id="fs-volume-waves"/></svg>
-            </button>
-            <input type="range" id="fs-volume-slider" class="fs-volume-slider" min="0" max="100" value="80">
-          </div>
+        <!-- Fullscreen Quick Actions (Add to Playlist) -->
+        <div class="fs-extra-actions">
+          <button type="button" class="fs-action-pill" id="fs-btn-add-playlist" title="Добавить в плейлист">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+            <span>В плейлист</span>
+          </button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Add to Playlist Bottom Sheet (iOS Action Sheet) -->
+  <div class="ios-sheet-overlay" id="add-to-playlist-overlay" style="display:none;" aria-hidden="true">
+    <div class="ios-sheet-dialog glass-panel" id="add-to-playlist-sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+      <div class="ios-sheet-handle" aria-hidden="true"></div>
+      <div class="ios-sheet-header">
+        <div class="ios-sheet-track-preview">
+          <img class="ios-sheet-track-cover" id="sheet-track-cover" src="" alt="" style="display:none;">
+          <div class="ios-sheet-track-fallback" id="sheet-track-fallback">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" opacity="0.5"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+          </div>
+          <div class="ios-sheet-track-meta">
+            <div class="ios-sheet-title" id="sheet-title">Добавить в плейлист</div>
+            <div class="ios-sheet-track-name" id="sheet-track-name">Выберите плейлист</div>
+          </div>
+        </div>
+        <button type="button" class="ios-sheet-close" id="btn-close-playlist-sheet" aria-label="Закрыть">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <button type="button" class="ios-sheet-create-btn" id="btn-sheet-create-playlist">
+        <span class="ios-sheet-create-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </span>
+        <span>+ Создать новый плейлист</span>
+      </button>
+
+      <div class="ios-sheet-list" id="sheet-playlists-list"></div>
     </div>
   </div>
 
@@ -902,6 +941,7 @@
 
   <!-- iOS Bottom Tab Bar (Safe Area Bottom) -->
   <nav class="ios-tabbar" id="ios-tabbar" aria-label="Нижняя навигация">
+    <div class="ios-tab-indicator" id="ios-tab-indicator" aria-hidden="true"></div>
     <button class="ios-tab-btn active" data-ios-view="search">
       <svg width="20" height="20" viewBox="0 0 18 18"><circle cx="7.5" cy="7.5" r="5" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M11.5 11.5L16 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
       <span>Поиск</span>
